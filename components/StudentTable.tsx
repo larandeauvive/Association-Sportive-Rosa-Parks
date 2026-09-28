@@ -1,0 +1,140 @@
+import React from 'react';
+import { Student, ColumnDefinition } from '../types';
+import { Trash2, ArrowRightLeft, CalendarDays } from 'lucide-react';
+import { formatDateFr, normalizeGender } from '../lib/utils';
+
+export interface StudentTableProps {
+  students: Student[];
+  columns: ColumnDefinition[];
+  selectedIds: Set<string>;
+  onSelectAll: () => void;
+  onSelectRow: (id: string) => void;
+  onRowClick?: (student: Student) => void;
+  onOpussCheck?: (id: string, checked: boolean) => void;
+}
+
+export const StudentTable: React.FC<StudentTableProps> = ({
+  students,
+  columns,
+  selectedIds,
+  onSelectAll,
+  onSelectRow,
+  onRowClick,
+  onOpussCheck
+}) => {
+  const allSelected = students.length > 0 && selectedIds.size === students.length;
+  const isIndeterminate = selectedIds.size > 0 && selectedIds.size < students.length;
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-gray-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
+              <th className="p-4 w-12 text-center">
+                <input 
+                  type="checkbox" 
+                  className="w-4 h-4 text-slate-900 rounded border-gray-300 focus:ring-slate-900 cursor-pointer"
+                  checked={allSelected}
+                  ref={input => {
+                    if (input) input.indeterminate = isIndeterminate;
+                  }}
+                  onChange={onSelectAll}
+                />
+              </th>
+              {columns.filter(c => c.visible).map(col => (
+                <th key={col.key as string} className="p-4 whitespace-nowrap">
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 text-sm text-gray-700 bg-white">
+            {students.length > 0 ? (
+              students.map((student) => {
+                const isSelected = selectedIds.has(student.id);
+                return (
+                  <tr 
+                    key={student.id} 
+                    onClick={() => onRowClick?.(student)}
+                    className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-slate-50' : ''} ${onRowClick ? 'cursor-pointer' : ''}`}
+                  >
+                    <td className="p-4 text-center" onClick={e => e.stopPropagation()}>
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 text-slate-900 rounded border-gray-300 focus:ring-slate-900 cursor-pointer"
+                        checked={isSelected}
+                        onChange={() => onSelectRow(student.id)}
+                      />
+                    </td>
+                    {columns.filter(c => c.visible).map(col => (
+                      <td key={`${student.id}-${col.key as string}`} className="p-4 whitespace-nowrap">
+                        {col.key === 'paid' ? (
+                           <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
+                             String(student.paid).toUpperCase() === 'OUI' 
+                             ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
+                             : 'bg-rose-100 text-rose-700 border border-rose-200'
+                           }`}>
+                             {student[col.key as string]}
+                           </span>
+                        ) : col.key === 'classGroup' ? (
+                          <span className="font-medium text-slate-900 bg-slate-100 px-2 py-1 rounded-md border border-slate-200">
+                             {student[col.key as string]}
+                          </span>
+                        ) : col.key === 'lastName' ? (
+                           <div className="flex items-center gap-1.5">
+                             {String(student.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-base text-rose-500 font-bold leading-none mb-0.5">AP🚫</span>}
+                             {String(student.swimmingCertificate).toUpperCase() !== 'OUI' && <span title="Savoir nager non validé" className="text-base">🏊‍♂️🚫</span>}
+                             {String(student.imageRights).toUpperCase() !== 'OUI' && <span title="Droit à l'image non validé" className="text-base">📷🚫</span>}
+                             <span className="font-semibold text-slate-900">{student[col.key as string]}</span>
+                           </div>
+                        ) : col.key === 'firstName' ? (
+                           <span className="font-semibold text-slate-900">{student[col.key as string]}</span>
+                        ) : col.key === 'opussChecked' ? (
+                           <input 
+                             type="checkbox" 
+                             checked={!!student.opussChecked} 
+                             onChange={(e) => onOpussCheck?.(student.id, e.target.checked)}
+                             onClick={(e) => e.stopPropagation()}
+                             className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                           />
+                        ) : col.key === 'gender' ? (
+                          (() => {
+                            const g = normalizeGender(student.gender);
+                            if (g === 'F') {
+                              return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">Fille</span>;
+                            }
+                            if (g === 'M') {
+                              return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">Garçon</span>;
+                            }
+                            return <span className="text-slate-400 text-xs italic">--</span>;
+                          })()
+                        ) : col.key === 'birthDate' ? (
+                           <span>{formatDateFr(student[col.key as string])}</span>
+                        ) : (
+                          student[col.key as string]
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={columns.filter(c => c.visible).length + 1} className="p-12 text-center text-gray-500">
+                  <div className="flex flex-col items-center justify-center space-y-3">
+                    <CalendarDays className="w-12 h-12 text-slate-300" />
+                    <span className="text-base font-semibold text-slate-700">Aucun élève trouvé pour cette année ou ce filtre.</span>
+                    <p className="text-xs text-slate-400 max-w-sm">
+                      Vérifiez l'année scolaire sélectionnée en haut à droite, ou importez votre fichier Pronote / UNSS via le bouton « Importer (CSV) ».
+                    </p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
