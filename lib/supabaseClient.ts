@@ -1,8 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Configuration Supabase par défaut (RGPD conforme UE)
-export const DEFAULT_SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://jgzcznwurnqefcseougm.supabase.co';
-export const DEFAULT_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_AlAV1AxacxXkLL8n7Su02g_0idiSK_L';
+const envUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL);
+const envKey = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY);
+
+export const DEFAULT_SUPABASE_URL = envUrl || 'https://jgzcznwurnqefcseougm.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = envKey || 'sb_publishable_AlAV1AxacxXkLL8n7Su02g_0idiSK_L';
 
 export const getSupabaseConfig = () => {
   const customUrl = typeof window !== 'undefined' ? localStorage.getItem('as_custom_supabase_url') : null;

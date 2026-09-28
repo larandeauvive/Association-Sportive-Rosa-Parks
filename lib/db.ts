@@ -1,4 +1,8 @@
 import { supabase, getSupabaseConfig } from './supabaseClient';
+import { db as firestoreDb } from './firebase';
+import { 
+  collection, doc, getDocs, getDoc, setDoc, deleteDoc, writeBatch 
+} from 'firebase/firestore';
 import { 
   Student, PublicStudent, Teacher, Convocation, 
   Session, EveningSlot, StaffMember, StaffAttendanceRecord 
@@ -44,15 +48,49 @@ import {
 
 const API_BASE = '/api';
 
+// Cache de détection de disponibilité du serveur Express local
+let _apiAvailable: boolean | null = null;
+let _apiCheckPromise: Promise<boolean> | null = null;
+
+export async function isApiServerAvailable(): Promise<boolean> {
+  if (typeof window === 'undefined') return true;
+  if (_apiAvailable !== null) return _apiAvailable;
+  if (_apiCheckPromise) return _apiCheckPromise;
+
+  _apiCheckPromise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800);
+      const res = await fetch(`${API_BASE}/health`, { 
+        method: 'GET', 
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('application/json')) {
+        _apiAvailable = true;
+        return true;
+      }
+    } catch {
+      // Serveur absent (ex: déploiement Vercel statique)
+    }
+    _apiAvailable = false;
+    return false;
+  })();
+
+  return _apiCheckPromise;
+}
+
 // Helper for API routes with robust HTML/JSON error detection
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('as_auth_token') || 'admin-secret-passkey';
+  const token = (typeof window !== 'undefined' ? localStorage.getItem('as_auth_token') : null) || 'admin-secret-passkey';
+  const fullUrl = url.startsWith('http') ? url : (typeof window !== 'undefined' ? url : `http://localhost:3000${url}`);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
     ...(options?.headers as Record<string, string> || {})
   };
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(fullUrl, { ...options, headers });
   const contentType = res.headers.get('content-type') || '';
   const isJson = contentType.includes('application/json');
 
@@ -91,8 +129,35 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Suivi de l'absence de tables dans Supabase
+const supabaseTableMissing: Record<string, boolean> = {};
+
+function isTableMissingInSupabase(tableName: string): boolean {
+  const cfg = getSupabaseConfig();
+  if (!cfg.isCustom) return true;
+  return Boolean(supabaseTableMissing[tableName]);
+}
+
+function markTableMissingInSupabase(tableName: string, error: any) {
+  if (error && (error.code === 'PGRST205' || (error.message && error.message.includes('schema cache')))) {
+    supabaseTableMissing[tableName] = true;
+  }
+}
+
+// Safe ID generator that works even if crypto.randomUUID is not available
+function generateSafeId(prefix = 'ses'): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fallback
+  }
+  return `${prefix}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+}
+
 // ----------------------------------------------------
-// STUDENTS (Supabase client + API + LocalStorage fallback)
+// STUDENTS (Supabase + CloudSQL API + Firestore Cloud + LocalStorage)
 // ----------------------------------------------------
 export const getStudents = async (schoolYear?: string): Promise<Student[]> => {
   const cfg = getSupabaseConfig();
@@ -113,17 +178,43 @@ export const getStudents = async (schoolYear?: string): Promise<Student[]> => {
     }
   }
 
-  // Authoritative database via CloudSQL / Express API
-  try {
-    const q = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    const apiData = await fetchJson<Student[]>(`${API_BASE}/students${q}`);
-    if (apiData && apiData.length > 0) {
-      setLocalStudents(apiData);
-      return apiData;
+  // 1. API CloudSQL / Express
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const q = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const apiData = await fetchJson<Student[]>(`${API_BASE}/students${q}`);
+      if (apiData && apiData.length > 0) {
+        setLocalStudents(apiData);
+        return apiData;
+      }
+    } catch (apiErr) {
+      console.warn('API getStudents error, fallback to Firestore:', apiErr);
     }
-  } catch (apiErr) {
-    console.warn('API getStudents error, fallback to localStorage:', apiErr);
   }
+
+  // 2. Base de données cloud globale : Firebase Firestore (accessible depuis Vercel et tout ordinateur)
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'students'));
+    if (!snap.empty) {
+      const list: Student[] = [];
+      snap.forEach(d => {
+        const s = rowToStudent({ id: d.id, ...d.data() });
+        if (!schoolYear || s.schoolYear === schoolYear) {
+          list.push(s);
+        }
+      });
+      list.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+      if (list.length > 0) {
+        setLocalStudents(list);
+        return list;
+      }
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getStudents error:', fsErr);
+  }
+
+  // 3. Fallback LocalStorage
   return getLocalStudents(schoolYear);
 };
 
@@ -147,13 +238,46 @@ export const getPublicDirectory = async (schoolYear: string): Promise<PublicStud
     }
   }
 
-  try {
-    const apiData = await fetchJson<PublicStudent[]>(`${API_BASE}/public-directory?schoolYear=${encodeURIComponent(schoolYear)}`);
-    if (apiData && apiData.length > 0) {
-      return apiData;
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const apiData = await fetchJson<PublicStudent[]>(`${API_BASE}/public-directory?schoolYear=${encodeURIComponent(schoolYear)}`);
+      if (apiData && apiData.length > 0) {
+        return apiData;
+      }
+    } catch {
+      // fallback
     }
-  } catch {
-    // fallback
+  }
+
+  // Firestore fallback
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'students'));
+    if (!snap.empty) {
+      const list: PublicStudent[] = [];
+      snap.forEach(d => {
+        const s = rowToStudent({ id: d.id, ...d.data() });
+        if (!schoolYear || s.schoolYear === schoolYear) {
+          list.push({
+            id: s.id,
+            lastName: s.lastName,
+            firstName: s.firstName,
+            classGroup: s.classGroup,
+            schoolYear: s.schoolYear,
+            licenseNumber: s.licenseNumber,
+            paid: s.paid,
+            parentalAuth: s.parentalAuth,
+            swimmingCertificate: s.swimmingCertificate,
+            imageRights: s.imageRights,
+            hasLicense: !!(s.licenseNumber && s.licenseNumber.trim().length > 0) || s.opussChecked === true || s.paid === 'OUI'
+          });
+        }
+      });
+      list.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+      if (list.length > 0) return list;
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getPublicDirectory error:', fsErr);
   }
 
   const local = getLocalStudents(schoolYear);
@@ -163,7 +287,6 @@ export const getPublicDirectory = async (schoolYear: string): Promise<PublicStud
     firstName: s.firstName || '',
     classGroup: s.classGroup || '',
     schoolYear: s.schoolYear || '',
-    isAdult: s.isAdult || false,
     paid: s.paid || 'NON',
     parentalAuth: s.parentalAuth || 'NON',
     swimmingCertificate: s.swimmingCertificate || 'NON',
@@ -174,47 +297,53 @@ export const getPublicDirectory = async (schoolYear: string): Promise<PublicStud
 };
 
 export const addStudent = async (student: Omit<Student, "id">): Promise<string> => {
-  const newId = crypto.randomUUID();
-  const row = studentToRow({
+  const newId = generateSafeId('stu');
+  const studentWithId = {
     ...student,
     id: newId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  });
+  } as unknown as Student;
+  const row = studentToRow(studentWithId);
 
-  // Always mirror to localStorage for instant resilience
-  saveLocalStudent({ ...student, id: newId });
+  // Sauvegarde locale miroir
+  saveLocalStudent(studentWithId);
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('students').insert(row);
-    if (error) {
-      console.warn('Supabase addStudent error, falling back to API:', error.message);
-      try {
-        const res = await fetchJson<{ id: string }>(`${API_BASE}/students`, {
-          method: 'POST',
-          body: JSON.stringify(student)
-        });
-        return res.id;
-      } catch {
-        return newId;
-      }
+    await setDoc(doc(firestoreDb, 'students', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore addStudent error:', fsErr);
+  }
+
+  // Supabase si personnalisé
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').insert(row);
+    } catch {
+      // fallback
     }
-    return newId;
-  } catch {
+  }
+
+  // Serveur API
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       const res = await fetchJson<{ id: string }>(`${API_BASE}/students`, {
         method: 'POST',
-        body: JSON.stringify(student)
+        body: JSON.stringify(studentWithId)
       });
-      return res.id;
+      return res.id || newId;
     } catch {
-      return newId;
+      // ok
     }
   }
+
+  return newId;
 };
 
 export const updateStudent = async (id: string, data: Partial<Student>): Promise<void> => {
-  // Always update local mirror
   updateLocalStudent(id, data);
 
   const row = studentToRow({
@@ -222,27 +351,31 @@ export const updateStudent = async (id: string, data: Partial<Student>): Promise
     updatedAt: new Date().toISOString()
   });
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('students').update(row).eq('id', id);
-    if (error) {
-      console.warn('Supabase updateStudent error, falling back to API:', error.message);
-      try {
-        await fetchJson(`${API_BASE}/students/${encodeURIComponent(id)}`, {
-          method: 'PUT',
-          body: JSON.stringify(data)
-        });
-      } catch {
-        // Handled by local storage
-      }
+    await setDoc(doc(firestoreDb, 'students', id), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore updateStudent error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').update(row).eq('id', id);
+    } catch {
+      // ok
     }
-  } catch {
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       await fetchJson(`${API_BASE}/students/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: JSON.stringify(data)
       });
     } catch {
-      // Handled by local storage
+      // ok
     }
   }
 };
@@ -250,25 +383,30 @@ export const updateStudent = async (id: string, data: Partial<Student>): Promise
 export const deleteStudent = async (id: string): Promise<void> => {
   deleteLocalStudent(id);
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('students').delete().eq('id', id);
-    if (error) {
-      console.warn('Supabase deleteStudent error, falling back to API:', error.message);
-      try {
-        await fetchJson(`${API_BASE}/students/${encodeURIComponent(id)}`, {
-          method: 'DELETE'
-        });
-      } catch {
-        // Handled by local storage
-      }
+    await deleteDoc(doc(firestoreDb, 'students', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteStudent error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').delete().eq('id', id);
+    } catch {
+      // ok
     }
-  } catch {
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       await fetchJson(`${API_BASE}/students/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       });
     } catch {
-      // Handled by local storage
+      // ok
     }
   }
 };
@@ -277,27 +415,31 @@ export const deleteMultipleStudents = async (ids: string[]): Promise<void> => {
   if (!ids || ids.length === 0) return;
   deleteMultipleLocalStudents(ids);
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('students').delete().in('id', ids);
-    if (error) {
-      console.warn('Supabase deleteMultipleStudents error, falling back to API:', error.message);
-      try {
-        await fetchJson(`${API_BASE}/students/batch-delete`, {
-          method: 'POST',
-          body: JSON.stringify({ ids })
-        });
-      } catch {
-        // Handled by local storage
-      }
+    await Promise.all(ids.map(id => deleteDoc(doc(firestoreDb, 'students', id))));
+  } catch (fsErr) {
+    console.warn('Firestore deleteMultipleStudents error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').delete().in('id', ids);
+    } catch {
+      // ok
     }
-  } catch {
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       await fetchJson(`${API_BASE}/students/batch-delete`, {
         method: 'POST',
         body: JSON.stringify({ ids })
       });
     } catch {
-      // Handled by local storage
+      // ok
     }
   }
 };
@@ -311,27 +453,31 @@ export const updateMultipleStudents = async (ids: string[], data: Partial<Studen
     updatedAt: new Date().toISOString()
   });
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('students').update(row).in('id', ids);
-    if (error) {
-      console.warn('Supabase updateMultipleStudents error, falling back to API:', error.message);
-      try {
-        await fetchJson(`${API_BASE}/students/batch-update`, {
-          method: 'POST',
-          body: JSON.stringify({ ids, data })
-        });
-      } catch {
-        // Handled by local storage
-      }
+    await Promise.all(ids.map(id => setDoc(doc(firestoreDb, 'students', id), row, { merge: true })));
+  } catch (fsErr) {
+    console.warn('Firestore updateMultipleStudents error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').update(row).in('id', ids);
+    } catch {
+      // ok
     }
-  } catch {
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       await fetchJson(`${API_BASE}/students/batch-update`, {
         method: 'POST',
         body: JSON.stringify({ ids, data })
       });
     } catch {
-      // Handled by local storage
+      // ok
     }
   }
 };
@@ -339,47 +485,72 @@ export const updateMultipleStudents = async (ids: string[], data: Partial<Studen
 export const batchUpsertStudentsApi = async (students: Partial<Student>[], schoolYear: string): Promise<number> => {
   if (!students || students.length === 0) return 0;
   
-  // Save directly to localStorage first so UI reflects imports immediately
   batchSaveLocalStudents(students, schoolYear);
 
   const now = new Date().toISOString();
-  const rows = students.map(s => {
-    const r = studentToRow({
-      ...s,
-      schoolYear: s.schoolYear || schoolYear,
-      updatedAt: now,
-      createdAt: s.createdAt || now
-    });
-    if (!r.id) r.id = crypto.randomUUID();
-    return r;
-  });
+  const fullStudents: Student[] = students.map(s => ({
+    id: s.id || generateSafeId('stu'),
+    lastName: s.lastName || '',
+    firstName: s.firstName || '',
+    classGroup: s.classGroup || '',
+    gender: s.gender || 'M',
+    schoolYear: s.schoolYear || schoolYear,
+    licenseNumber: s.licenseNumber || '',
+    paid: s.paid || 'NON',
+    amount: s.amount || '',
+    paymentMethod: s.paymentMethod || '',
+    checkNumber: s.checkNumber,
+    parentalAuth: s.parentalAuth || 'NON',
+    imageRights: s.imageRights || 'NON',
+    swimmingCertificate: s.swimmingCertificate || 'NON',
+    tshirt: s.tshirt || 'NON',
+    size: s.size || '',
+    birthDate: s.birthDate,
+    opussChecked: s.opussChecked || false,
+    isAdult: s.isAdult || false,
+    createdAt: s.createdAt || now,
+    updatedAt: now
+  }));
 
+  // Firestore Cloud par lots
   try {
-    const { error } = await supabase.from('students').upsert(rows);
-    if (error) {
-      console.warn('Supabase batchUpsert error, falling back to API:', error.message);
-      try {
-        const res = await fetchJson<{ success: boolean; count: number }>(`${API_BASE}/students/batch-upsert`, {
-          method: 'POST',
-          body: JSON.stringify({ students, schoolYear })
-        });
-        return res.count;
-      } catch {
-        return rows.length;
-      }
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < fullStudents.length; i += CHUNK_SIZE) {
+      const chunk = fullStudents.slice(i, i + CHUNK_SIZE);
+      await Promise.all(chunk.map(s => {
+        const row = studentToRow(s);
+        return setDoc(doc(firestoreDb, 'students', s.id), row, { merge: true });
+      }));
     }
-    return rows.length;
-  } catch {
+  } catch (fsErr) {
+    console.warn('Firestore batchUpsertStudents error:', fsErr);
+  }
+
+  const rows = fullStudents.map(s => studentToRow(s));
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('students').upsert(rows);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       const res = await fetchJson<{ success: boolean; count: number }>(`${API_BASE}/students/batch-upsert`, {
         method: 'POST',
-        body: JSON.stringify({ students, schoolYear })
+        body: JSON.stringify({ students: fullStudents, schoolYear })
       });
       return res.count;
     } catch {
-      return rows.length;
+      // ok
     }
   }
+
+  return rows.length;
 };
 
 export const syncAllToPublicDirectory = async (_studentsList: Student[]): Promise<void> => {
@@ -387,71 +558,152 @@ export const syncAllToPublicDirectory = async (_studentsList: Student[]): Promis
 };
 
 // ----------------------------------------------------
-// TEACHERS
+// TEACHERS (Firestore + CloudSQL API + Supabase)
 // ----------------------------------------------------
 export const getTeachersList = async (): Promise<Teacher[]> => {
-  try {
-    const { data, error } = await supabase.from('teachers').select('*').order('name', { ascending: true });
-    if (error) throw error;
-    return (data || []).map((r: any) => ({ id: r.id, name: r.name }));
-  } catch {
-    return fetchJson<Teacher[]>(`${API_BASE}/teachers`);
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      const { data, error } = await supabase.from('teachers').select('*').order('name', { ascending: true });
+      if (!error && data && data.length > 0) {
+        const mapped = data.map((r: any) => ({ id: r.id, name: r.name }));
+        setLocalTeachers(mapped);
+        return mapped;
+      }
+    } catch {
+      // fallback
+    }
   }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const list = await fetchJson<Teacher[]>(`${API_BASE}/teachers`);
+      if (list && list.length > 0) {
+        setLocalTeachers(list);
+        return list;
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'teachers'));
+    if (!snap.empty) {
+      const list: Teacher[] = [];
+      snap.forEach(d => list.push({ id: d.id, name: d.data().name || '' }));
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      if (list.length > 0) {
+        setLocalTeachers(list);
+        return list;
+      }
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getTeachersList error:', fsErr);
+  }
+
+  return getLocalTeachers();
 };
 
 export const addTeacherApi = async (name: string): Promise<string> => {
-  const newId = crypto.randomUUID();
+  const newId = generateSafeId('tea');
+
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('teachers').insert({ id: newId, name });
-    if (error) throw error;
-    return newId;
-  } catch {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/teachers`, {
-      method: 'POST',
-      body: JSON.stringify({ name })
-    });
-    return res.id;
+    await setDoc(doc(firestoreDb, 'teachers', newId), { id: newId, name }, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore addTeacher error:', fsErr);
   }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('teachers').insert({ id: newId, name });
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/teachers`, {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
+  }
+
+  return newId;
 };
 
 export const updateTeacherApi = async (id: string, name: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('teachers').update({ name }).eq('id', id);
-    if (error) throw error;
-  } catch {
-    await fetchJson(`${API_BASE}/teachers/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name })
-    });
+    await setDoc(doc(firestoreDb, 'teachers', id), { name }, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore updateTeacher error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('teachers').update({ name }).eq('id', id);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/teachers/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name })
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
 export const deleteTeacherApi = async (id: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('teachers').delete().eq('id', id);
-    if (error) throw error;
-  } catch {
-    await fetchJson(`${API_BASE}/teachers/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
+    await deleteDoc(doc(firestoreDb, 'teachers', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteTeacher error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('teachers').delete().eq('id', id);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/teachers/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
 // ----------------------------------------------------
-// SESSIONS & CRÉNEAUX D'ACTIVITÉS (Supabase client direct)
+// SESSIONS & CRÉNEAUX D'ACTIVITÉS
 // ----------------------------------------------------
-// Safe ID generator that works even if crypto.randomUUID is not available
-function generateSafeId(prefix = 'ses'): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID();
-    }
-  } catch {
-    // fallback
-  }
-  return `${prefix}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
-}
-
 function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Session[] {
   const localList = getLocalSessions(schoolYear);
   const map = new Map<string, Session>();
@@ -467,20 +719,6 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
   const result = Array.from(map.values());
   result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return result;
-}
-
-const supabaseTableMissing: Record<string, boolean> = {};
-
-function isTableMissingInSupabase(tableName: string): boolean {
-  const cfg = getSupabaseConfig();
-  if (!cfg.isCustom) return true; // Only query Supabase if custom credentials were configured by user
-  return !!supabaseTableMissing[tableName];
-}
-
-function markTableMissingInSupabase(tableName: string, error: any) {
-  if (error && (error.code === 'PGRST205' || (error.message && error.message.includes('schema cache')))) {
-    supabaseTableMissing[tableName] = true;
-  }
 }
 
 export const getSessionsList = async (schoolYear?: string): Promise<Session[]> => {
@@ -502,13 +740,41 @@ export const getSessionsList = async (schoolYear?: string): Promise<Session[]> =
     }
   }
 
-  try {
-    const q = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    const serverList = await fetchJson<Session[]>(`${API_BASE}/sessions${q}`);
-    return mergeSessionsWithLocal(serverList, schoolYear);
-  } catch {
-    return getLocalSessions(schoolYear);
+  // 1. API CloudSQL / Express
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const q = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const serverList = await fetchJson<Session[]>(`${API_BASE}/sessions${q}`);
+      if (serverList && serverList.length > 0) {
+        return mergeSessionsWithLocal(serverList, schoolYear);
+      }
+    } catch {
+      // fallback
+    }
   }
+
+  // 2. Base Firestore Cloud (accessible mondialement)
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'sessions'));
+    if (!snap.empty) {
+      const fsList: Session[] = [];
+      snap.forEach(d => {
+        const s = rowToSession({ id: d.id, ...d.data() });
+        if (!schoolYear || s.schoolYear === schoolYear) {
+          fsList.push(s);
+        }
+      });
+      fsList.sort((a, b) => b.date.localeCompare(a.date));
+      if (fsList.length > 0) {
+        return mergeSessionsWithLocal(fsList, schoolYear);
+      }
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getSessionsList error:', fsErr);
+  }
+
+  return getLocalSessions(schoolYear);
 };
 
 export const getSession = async (id: string): Promise<Session> => {
@@ -522,73 +788,101 @@ export const getSession = async (id: string): Promise<Session> => {
     }
   }
 
-  try {
-    return await fetchJson<Session>(`${API_BASE}/sessions/${encodeURIComponent(id)}`);
-  } catch {
-    const all = getLocalSessions();
-    const s = all.find(item => item.id === id);
-    if (!s) throw new Error('Séance introuvable');
-    return s;
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      return await fetchJson<Session>(`${API_BASE}/sessions/${encodeURIComponent(id)}`);
+    } catch {
+      // fallback
+    }
   }
+
+  // Firestore Cloud
+  try {
+    const docSnap = await getDoc(doc(firestoreDb, 'sessions', id));
+    if (docSnap.exists()) {
+      return rowToSession({ id: docSnap.id, ...docSnap.data() });
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getSession error:', fsErr);
+  }
+
+  const all = getLocalSessions();
+  const s = all.find(item => item.id === id);
+  if (!s) throw new Error('Séance introuvable');
+  return s;
 };
 
 export const addSessionApi = async (data: Omit<Session, 'id'>): Promise<string> => {
   const newId = generateSafeId('ses');
   const sessionWithId = { ...data, id: newId };
-  // Sauvegarde locale miroir immédiate pour réactivité instantanée
   saveLocalSession(sessionWithId);
 
   const row = sessionToRow(sessionWithId);
 
+  // Firestore Cloud (écrit instantanément dans le cloud global)
+  try {
+    await setDoc(doc(firestoreDb, 'sessions', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore addSession error:', fsErr);
+  }
+
   if (!isTableMissingInSupabase('sessions')) {
     try {
       const { error } = await supabase.from('sessions').insert(row);
-      if (error) {
-        markTableMissingInSupabase('sessions', error);
-      } else {
-        return newId;
-      }
+      if (error) markTableMissingInSupabase('sessions', error);
     } catch (err: any) {
       markTableMissingInSupabase('sessions', err);
     }
   }
 
-  try {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/sessions`, {
-      method: 'POST',
-      body: JSON.stringify(sessionWithId)
-    });
-    return res.id || newId;
-  } catch (apiErr) {
-    return newId;
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/sessions`, {
+        method: 'POST',
+        body: JSON.stringify(sessionWithId)
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
   }
+
+  return newId;
 };
 
 export const updateSessionApi = async (id: string, data: Partial<Session>): Promise<void> => {
-  // Sauvegarde locale miroir immédiate
   saveLocalSession({ ...data, id });
 
   const row = sessionToRow(data);
+
+  // Firestore Cloud
+  try {
+    await setDoc(doc(firestoreDb, 'sessions', id), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore updateSession error:', fsErr);
+  }
+
   if (!isTableMissingInSupabase('sessions')) {
     try {
       const { error } = await supabase.from('sessions').update(row).eq('id', id);
-      if (error) {
-        markTableMissingInSupabase('sessions', error);
-      } else {
-        return;
-      }
+      if (error) markTableMissingInSupabase('sessions', error);
     } catch (err: any) {
       markTableMissingInSupabase('sessions', err);
     }
   }
 
-  try {
-    await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: JSON.stringify(data)
-    });
-  } catch (apiErr) {
-    // Local save already active
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
@@ -603,7 +897,6 @@ export const saveSessionApi = async (data: Partial<Session> & { id?: string }): 
       return { id: newId };
     }
   } catch (err) {
-    console.warn('saveSessionApi critical fallback to local storage:', err);
     const fallbackId = data.id || generateSafeId('ses');
     saveLocalSession({ ...data, id: fallbackId });
     return { id: fallbackId };
@@ -612,27 +905,35 @@ export const saveSessionApi = async (data: Partial<Session> & { id?: string }): 
 
 export const deleteSessionApi = async (id: string): Promise<void> => {
   deleteLocalSession(id);
-  // Toujours supprimer dans l'API locale / CloudSQL Express
+
+  // Firestore Cloud
   try {
-    await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
-  } catch (e) {
-    console.warn('API delete session error:', e);
+    await deleteDoc(doc(firestoreDb, 'sessions', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteSession error:', fsErr);
   }
-  // Et tenter la suppression dans Supabase
-  try {
-    await supabase.from('sessions').delete().eq('id', id);
-  } catch (e) {
-    console.warn('Supabase delete session error:', e);
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
+  }
+
+  if (!isTableMissingInSupabase('sessions')) {
+    try {
+      await supabase.from('sessions').delete().eq('id', id);
+    } catch {
+      // ok
+    }
   }
 };
 
-/**
- * Réservation d'un créneau / séance d'activité avec Supabase et synchronisation convocation
- */
 export const enrollInSession = async (sessionId: string, studentId: string): Promise<void> => {
-  // Mise à jour immédiate du miroir local pour réactivité instantanée
   const localSessions = getLocalSessions();
   const localSes = localSessions.find(s => s.id === sessionId);
   let convId: string | undefined = localSes?.convocationId;
@@ -641,7 +942,6 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
     const currentEnrolled = Array.from(new Set([...(localSes.enrolledStudentIds || []), studentId]));
     saveLocalSession({ ...localSes, enrolledStudentIds: currentEnrolled });
     
-    // Synchroniser la convocation locale liée (par convocationId ou sessionId)
     const localConvs = getLocalConvocations();
     const linkedConvs = localConvs.filter(c => c.id === localSes.convocationId || c.sessionId === sessionId);
     linkedConvs.forEach(linkedConv => {
@@ -650,62 +950,84 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
     });
   }
 
-  // Toujours synchroniser avec le backend serveur Express / PostgreSQL
+  // Firestore Cloud
   try {
-    await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/enroll`, {
-      method: 'POST',
-      body: JSON.stringify({ studentId })
-    });
-  } catch (apiErr) {
-    console.warn('Backend API enroll error (falling back to Supabase/local):', apiErr);
-  }
+    const sDocRef = doc(firestoreDb, 'sessions', sessionId);
+    const sDocSnap = await getDoc(sDocRef);
+    if (sDocSnap.exists()) {
+      const sData = sDocSnap.data();
+      const currentList: string[] = sData.enrolled_student_ids || sData.enrolledStudentIds || [];
+      const updatedList = Array.from(new Set([...currentList, studentId]));
+      await setDoc(sDocRef, { 
+        enrolled_student_ids: updatedList, 
+        enrolledStudentIds: updatedList 
+      }, { merge: true });
 
-  try {
-    // 1. Lire la séance courante dans Supabase si accessible
-    const { data: currentSession, error: fetchErr } = await supabase
-      .from('sessions')
-      .select('enrolled_student_ids, max_participants, convocation_id')
-      .eq('id', sessionId)
-      .single();
-
-    if (!fetchErr && currentSession) {
-      convId = currentSession?.convocation_id || convId;
-      const enrolledList: string[] = currentSession?.enrolled_student_ids || [];
-      if (!enrolledList.includes(studentId)) {
-        if (currentSession?.max_participants && enrolledList.length >= currentSession.max_participants) {
-          throw new Error('La séance est complète.');
-        }
-        enrolledList.push(studentId);
-
-        await supabase
-          .from('sessions')
-          .update({ enrolled_student_ids: enrolledList })
-          .eq('id', sessionId);
-
-        // Synchroniser la convocation liée dans Supabase
-        if (convId) {
-          try {
-            const { data: convData } = await supabase
-              .from('convocations')
-              .select('student_ids')
-              .eq('id', convId)
-              .single();
-            const convList = Array.from(new Set([...(convData?.student_ids || []), studentId]));
-            await supabase.from('convocations').update({ student_ids: convList }).eq('id', convId);
-          } catch (cErr) {
-            console.warn('Erreur sync convocation Supabase:', cErr);
-          }
+      const linkedConvId = sData.convocation_id || sData.convocationId || convId;
+      if (linkedConvId) {
+        const cDocRef = doc(firestoreDb, 'convocations', linkedConvId);
+        const cDocSnap = await getDoc(cDocRef);
+        if (cDocSnap.exists()) {
+          const cData = cDocSnap.data();
+          const cList: string[] = cData.student_ids || cData.studentIds || [];
+          const updatedCList = Array.from(new Set([...cList, studentId]));
+          await setDoc(cDocRef, { 
+            student_ids: updatedCList, 
+            studentIds: updatedCList 
+          }, { merge: true });
         }
       }
     }
-  } catch (err) {
-    console.warn('Supabase enroll error:', err);
+  } catch (fsErr) {
+    console.warn('Firestore enroll error:', fsErr);
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/enroll`, {
+        method: 'POST',
+        body: JSON.stringify({ studentId })
+      });
+    } catch {
+      // ok
+    }
+  }
+
+  if (!isTableMissingInSupabase('sessions')) {
+    try {
+      const { data: currentSession } = await supabase
+        .from('sessions')
+        .select('enrolled_student_ids, max_participants, convocation_id')
+        .eq('id', sessionId)
+        .single();
+
+      if (currentSession) {
+        const enrolledList: string[] = currentSession.enrolled_student_ids || [];
+        if (!enrolledList.includes(studentId)) {
+          enrolledList.push(studentId);
+          await supabase.from('sessions').update({ enrolled_student_ids: enrolledList }).eq('id', sessionId);
+          if (currentSession.convocation_id) {
+            try {
+              const { data: convData } = await supabase
+                .from('convocations')
+                .select('student_ids')
+                .eq('id', currentSession.convocation_id)
+                .single();
+              const convList = Array.from(new Set([...(convData?.student_ids || []), studentId]));
+              await supabase.from('convocations').update({ student_ids: convList }).eq('id', currentSession.convocation_id);
+            } catch {
+              // ok
+            }
+          }
+        }
+      }
+    } catch {
+      // ok
+    }
   }
 };
 
-/**
- * Inscription d'une équipe complète à une séance
- */
 export const enrollTeamInSession = async (
   sessionId: string,
   teamName: string,
@@ -737,21 +1059,10 @@ export const enrollTeamInSession = async (
     return newTeam;
   } catch (err) {
     console.warn('Error in enrollTeamInSession:', err);
-    try {
-      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/enroll-team`, {
-        method: 'POST',
-        body: JSON.stringify({ team: newTeam })
-      });
-    } catch (e) {
-      console.warn('API fallback enroll-team error:', e);
-    }
     return newTeam;
   }
 };
 
-/**
- * Retrait / suppression d'une équipe inscrite
- */
 export const deleteTeamFromSession = async (
   sessionId: string,
   teamId: string
@@ -779,6 +1090,9 @@ export const deleteTeamFromSession = async (
   }
 };
 
+// ----------------------------------------------------
+// CONVOCATIONS
+// ----------------------------------------------------
 function mergeConvocationsWithLocal(remoteList: Convocation[], schoolYear?: string): Convocation[] {
   const localList = getLocalConvocations(schoolYear);
   const map = new Map<string, Convocation>();
@@ -796,9 +1110,6 @@ function mergeConvocationsWithLocal(remoteList: Convocation[], schoolYear?: stri
   return result;
 }
 
-// ----------------------------------------------------
-// CONVOCATIONS
-// ----------------------------------------------------
 export const getConvocationsList = async (schoolYear?: string): Promise<Convocation[]> => {
   if (!isTableMissingInSupabase('convocations')) {
     try {
@@ -818,13 +1129,40 @@ export const getConvocationsList = async (schoolYear?: string): Promise<Convocat
     }
   }
 
-  try {
-    const queryStr = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    const serverList = await fetchJson<Convocation[]>(`${API_BASE}/convocations${queryStr}`);
-    return mergeConvocationsWithLocal(serverList, schoolYear);
-  } catch {
-    return getLocalConvocations(schoolYear);
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const queryStr = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const serverList = await fetchJson<Convocation[]>(`${API_BASE}/convocations${queryStr}`);
+      if (serverList && serverList.length > 0) {
+        return mergeConvocationsWithLocal(serverList, schoolYear);
+      }
+    } catch {
+      // fallback
+    }
   }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'convocations'));
+    if (!snap.empty) {
+      const list: Convocation[] = [];
+      snap.forEach(d => {
+        const c = rowToConvocation({ id: d.id, ...d.data() });
+        if (!schoolYear || c.schoolYear === schoolYear) {
+          list.push(c);
+        }
+      });
+      list.sort((a, b) => b.departureDate.localeCompare(a.departureDate));
+      if (list.length > 0) {
+        return mergeConvocationsWithLocal(list, schoolYear);
+      }
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getConvocationsList error:', fsErr);
+  }
+
+  return getLocalConvocations(schoolYear);
 };
 
 export const addConvocationApi = async (data: Omit<Convocation, 'id'>): Promise<string> => {
@@ -834,54 +1172,69 @@ export const addConvocationApi = async (data: Omit<Convocation, 'id'>): Promise<
 
   const row = convocationToRow(convWithId);
 
+  // Firestore Cloud
+  try {
+    await setDoc(doc(firestoreDb, 'convocations', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore addConvocation error:', fsErr);
+  }
+
   if (!isTableMissingInSupabase('convocations')) {
     try {
       const { error } = await supabase.from('convocations').insert(row);
-      if (error) {
-        markTableMissingInSupabase('convocations', error);
-      } else {
-        return newId;
-      }
+      if (error) markTableMissingInSupabase('convocations', error);
     } catch (err: any) {
       markTableMissingInSupabase('convocations', err);
     }
   }
 
-  try {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/convocations`, {
-      method: 'POST',
-      body: JSON.stringify(convWithId)
-    });
-    return res.id || newId;
-  } catch {
-    return newId;
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/convocations`, {
+        method: 'POST',
+        body: JSON.stringify(convWithId)
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
   }
+
+  return newId;
 };
 
 export const updateConvocationApi = async (id: string, data: Partial<Convocation>): Promise<void> => {
   saveLocalConvocation({ ...data, id });
+
   const row = convocationToRow(data);
+
+  // Firestore Cloud
+  try {
+    await setDoc(doc(firestoreDb, 'convocations', id), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore updateConvocation error:', fsErr);
+  }
 
   if (!isTableMissingInSupabase('convocations')) {
     try {
       const { error } = await supabase.from('convocations').update(row).eq('id', id);
-      if (error) {
-        markTableMissingInSupabase('convocations', error);
-      } else {
-        return;
-      }
+      if (error) markTableMissingInSupabase('convocations', error);
     } catch (err: any) {
       markTableMissingInSupabase('convocations', err);
     }
   }
 
-  try {
-    await fetchJson(`${API_BASE}/convocations/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      body: JSON.stringify(data)
-    });
-  } catch {
-    // Ignorer erreur distante
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/convocations/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
@@ -904,19 +1257,31 @@ export const saveConvocationApi = async (data: Partial<Convocation> & { id?: str
 
 export const deleteConvocationApi = async (id: string): Promise<void> => {
   deleteLocalConvocation(id);
-  // Toujours supprimer dans l'API locale / CloudSQL Express
+
+  // Firestore Cloud
   try {
-    await fetchJson(`${API_BASE}/convocations/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
-  } catch (e) {
-    console.warn('API delete convocation error:', e);
+    await deleteDoc(doc(firestoreDb, 'convocations', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteConvocation error:', fsErr);
   }
-  // Et tenter la suppression dans Supabase
-  try {
-    await supabase.from('convocations').delete().eq('id', id);
-  } catch (e) {
-    console.warn('Supabase delete convocation error:', e);
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/convocations/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
+  }
+
+  if (!isTableMissingInSupabase('convocations')) {
+    try {
+      await supabase.from('convocations').delete().eq('id', id);
+    } catch {
+      // ok
+    }
   }
 };
 
@@ -924,60 +1289,156 @@ export const deleteConvocationApi = async (id: string): Promise<void> => {
 // STAFF & EVENING SLOTS
 // ----------------------------------------------------
 export const getEveningSlotsList = async (schoolYear?: string): Promise<EveningSlot[]> => {
-  try {
-    let query = supabase.from('evening_slots').select('*');
-    if (schoolYear) query = query.eq('school_year', schoolYear);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []).map(rowToEveningSlot);
-  } catch {
-    const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    return fetchJson<EveningSlot[]>(`${API_BASE}/evening-slots${query}`);
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      let query = supabase.from('evening_slots').select('*');
+      if (schoolYear) query = query.eq('school_year', schoolYear);
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) return data.map(rowToEveningSlot);
+    } catch {
+      // fallback
+    }
   }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const list = await fetchJson<EveningSlot[]>(`${API_BASE}/evening-slots${query}`);
+      if (list && list.length > 0) return list;
+    } catch {
+      // fallback
+    }
+  }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'evening_slots'));
+    if (!snap.empty) {
+      const list: EveningSlot[] = [];
+      snap.forEach(d => {
+        const item = rowToEveningSlot({ id: d.id, ...d.data() });
+        if (!schoolYear || item.schoolYear === schoolYear) list.push(item);
+      });
+      if (list.length > 0) return list;
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getEveningSlotsList error:', fsErr);
+  }
+
+  return getLocalEveningSlots(schoolYear);
 };
 
 export const saveEveningSlotApi = async (slot: Omit<EveningSlot, 'id'> & { id?: string }): Promise<string> => {
-  const newId = slot.id || crypto.randomUUID();
+  const newId = slot.id || generateSafeId('esl');
   const row = eveningSlotToRow({ ...slot, id: newId });
+
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('evening_slots').upsert(row);
-    if (error) throw error;
-    return newId;
-  } catch {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/evening-slots`, {
-      method: 'POST',
-      body: JSON.stringify(slot)
-    });
-    return res.id;
+    await setDoc(doc(firestoreDb, 'evening_slots', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore saveEveningSlot error:', fsErr);
   }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('evening_slots').upsert(row);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/evening-slots`, {
+        method: 'POST',
+        body: JSON.stringify(slot)
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
+  }
+
+  return newId;
 };
 
 export const deleteEveningSlotApi = async (id: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('evening_slots').delete().eq('id', id);
-    if (error) throw error;
-  } catch {
-    await fetchJson(`${API_BASE}/evening-slots/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
+    await deleteDoc(doc(firestoreDb, 'evening_slots', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteEveningSlot error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('evening_slots').delete().eq('id', id);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/evening-slots/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
 export const getStaffMembersList = async (schoolYear?: string): Promise<StaffMember[]> => {
-  try {
-    let query = supabase.from('staff_members').select('*');
-    if (schoolYear) query = query.eq('school_year', schoolYear);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []).map(rowToStaffMember);
-  } catch {
-    const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    return fetchJson<StaffMember[]>(`${API_BASE}/staff-members${query}`);
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      let query = supabase.from('staff_members').select('*');
+      if (schoolYear) query = query.eq('school_year', schoolYear);
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) return data.map(rowToStaffMember);
+    } catch {
+      // fallback
+    }
   }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const list = await fetchJson<StaffMember[]>(`${API_BASE}/staff-members${query}`);
+      if (list && list.length > 0) return list;
+    } catch {
+      // fallback
+    }
+  }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'staff_members'));
+    if (!snap.empty) {
+      const list: StaffMember[] = [];
+      snap.forEach(d => {
+        const item = rowToStaffMember({ id: d.id, ...d.data() });
+        if (!schoolYear || item.schoolYear === schoolYear) list.push(item);
+      });
+      if (list.length > 0) return list;
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getStaffMembersList error:', fsErr);
+  }
+
+  return getLocalStaffMembers(schoolYear);
 };
 
 export const saveStaffMemberApi = async (data: Omit<StaffMember, 'id'> & { id?: string }): Promise<string> => {
-  const newId = data.id || crypto.randomUUID();
+  const newId = data.id || generateSafeId('stf');
   const now = new Date().toISOString();
   const row = staffMemberToRow({
     ...data,
@@ -986,77 +1447,180 @@ export const saveStaffMemberApi = async (data: Omit<StaffMember, 'id'> & { id?: 
     createdAt: data.createdAt || now
   });
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('staff_members').upsert(row);
-    if (error) throw error;
-    return newId;
-  } catch {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/staff-members`, {
-      method: 'POST',
-      body: JSON.stringify(data)
-    });
-    return res.id;
+    await setDoc(doc(firestoreDb, 'staff_members', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore saveStaffMember error:', fsErr);
   }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('staff_members').upsert(row);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/staff-members`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
+  }
+
+  return newId;
 };
 
 export const deleteStaffMemberApi = async (id: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('staff_members').delete().eq('id', id);
-    if (error) throw error;
-  } catch {
-    await fetchJson(`${API_BASE}/staff-members/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
+    await deleteDoc(doc(firestoreDb, 'staff_members', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteStaffMember error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('staff_members').delete().eq('id', id);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/staff-members/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
 export const getStaffAttendanceList = async (schoolYear?: string): Promise<StaffAttendanceRecord[]> => {
-  try {
-    let query = supabase.from('staff_attendance').select('*').order('date', { ascending: false });
-    if (schoolYear) query = query.eq('school_year', schoolYear);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data || []).map(rowToStaffAttendance);
-  } catch {
-    const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
-    return fetchJson<StaffAttendanceRecord[]>(`${API_BASE}/staff-attendance${query}`);
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      let query = supabase.from('staff_attendance').select('*').order('date', { ascending: false });
+      if (schoolYear) query = query.eq('school_year', schoolYear);
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) return data.map(rowToStaffAttendance);
+    } catch {
+      // fallback
+    }
   }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const query = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
+      const list = await fetchJson<StaffAttendanceRecord[]>(`${API_BASE}/staff-attendance${query}`);
+      if (list && list.length > 0) return list;
+    } catch {
+      // fallback
+    }
+  }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDocs(collection(firestoreDb, 'staff_attendance'));
+    if (!snap.empty) {
+      const list: StaffAttendanceRecord[] = [];
+      snap.forEach(d => {
+        const item = rowToStaffAttendance({ id: d.id, ...d.data() });
+        if (!schoolYear || item.schoolYear === schoolYear) list.push(item);
+      });
+      if (list.length > 0) return list;
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getStaffAttendanceList error:', fsErr);
+  }
+
+  return getLocalStaffAttendance(schoolYear);
 };
 
 export const saveStaffAttendanceApi = async (record: Omit<StaffAttendanceRecord, 'id'> & { id?: string }): Promise<string> => {
-  const newId = record.id || crypto.randomUUID();
+  const newId = record.id || generateSafeId('att');
   const row = staffAttendanceToRow({
     ...record,
     id: newId,
     createdAt: record.createdAt || new Date().toISOString()
   });
 
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('staff_attendance').upsert(row);
-    if (error) throw error;
-    return newId;
-  } catch {
-    const res = await fetchJson<{ id: string }>(`${API_BASE}/staff-attendance`, {
-      method: 'POST',
-      body: JSON.stringify(record)
-    });
-    return res.id;
+    await setDoc(doc(firestoreDb, 'staff_attendance', newId), row, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore saveStaffAttendance error:', fsErr);
   }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('staff_attendance').upsert(row);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<{ id: string }>(`${API_BASE}/staff-attendance`, {
+        method: 'POST',
+        body: JSON.stringify(record)
+      });
+      return res.id || newId;
+    } catch {
+      // ok
+    }
+  }
+
+  return newId;
 };
 
 export const deleteStaffAttendanceApi = async (id: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('staff_attendance').delete().eq('id', id);
-    if (error) throw error;
-  } catch {
-    await fetchJson(`${API_BASE}/staff-attendance/${encodeURIComponent(id)}`, {
-      method: 'DELETE'
-    });
+    await deleteDoc(doc(firestoreDb, 'staff_attendance', id));
+  } catch (fsErr) {
+    console.warn('Firestore deleteStaffAttendance error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('staff_attendance').delete().eq('id', id);
+    } catch {
+      // ok
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/staff-attendance/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
   }
 };
 
 // ----------------------------------------------------
-// SETTINGS & REGISTRATION FORM (Supabase app_settings)
+// SETTINGS & REGISTRATION FORM
 // ----------------------------------------------------
 export const getAppSetting = async <T = any>(key: string, defaultValue?: T): Promise<T | null> => {
   const cfg = getSupabaseConfig();
@@ -1078,25 +1642,49 @@ export const getAppSetting = async <T = any>(key: string, defaultValue?: T): Pro
     }
   }
 
-  try {
-    const res = await fetchJson<T>(`${API_BASE}/settings/${encodeURIComponent(key)}`);
-    if (res !== null && res !== undefined) {
-      saveLocalSetting(key, res);
-      return res;
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      const res = await fetchJson<T>(`${API_BASE}/settings/${encodeURIComponent(key)}`);
+      if (res !== null && res !== undefined) {
+        saveLocalSetting(key, res);
+        return res;
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
+
+  // Firestore Cloud
+  try {
+    const snap = await getDoc(doc(firestoreDb, 'settings', key));
+    if (snap.exists()) {
+      const val = snap.data() as T;
+      saveLocalSetting(key, val);
+      return val;
+    }
+  } catch (fsErr) {
+    console.warn('Firestore getAppSetting error:', fsErr);
+  }
+
   return getLocalSetting<T>(key, defaultValue !== undefined ? defaultValue : (null as unknown as T));
 };
 
 export const saveAppSetting = async <T = any>(key: string, value: T): Promise<void> => {
   saveLocalSetting(key, value);
-  const cfg = getSupabaseConfig();
-  const strValue = typeof value === 'string' ? value : JSON.stringify(value);
 
+  // Firestore Cloud
+  try {
+    const dataToSave = typeof value === 'object' && value !== null ? value : { value };
+    await setDoc(doc(firestoreDb, 'settings', key), dataToSave, { merge: true });
+  } catch (fsErr) {
+    console.warn('Firestore saveAppSetting error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
   if (cfg.isCustom) {
     try {
+      const strValue = typeof value === 'string' ? value : JSON.stringify(value);
       await supabase.from('app_settings').upsert({
         key,
         value: strValue,
@@ -1107,21 +1695,38 @@ export const saveAppSetting = async <T = any>(key: string, value: T): Promise<vo
     }
   }
 
-  try {
-    await fetchJson(`${API_BASE}/settings/${encodeURIComponent(key)}`, {
-      method: 'POST',
-      body: JSON.stringify(value)
-    });
-  } catch {
-    // Handled by local storage
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/settings/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        body: JSON.stringify(value)
+      });
+    } catch {
+      // Handled by local storage
+    }
   }
 };
 
 export const deleteAppSetting = async (key: string): Promise<void> => {
+  // Firestore Cloud
   try {
-    const { error } = await supabase.from('app_settings').delete().eq('key', key);
-    if (error) throw error;
-  } catch {
+    await deleteDoc(doc(firestoreDb, 'settings', key));
+  } catch (fsErr) {
+    console.warn('Firestore deleteAppSetting error:', fsErr);
+  }
+
+  const cfg = getSupabaseConfig();
+  if (cfg.isCustom) {
+    try {
+      await supabase.from('app_settings').delete().eq('key', key);
+    } catch {
+      // ignore
+    }
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
     try {
       await fetchJson(`${API_BASE}/settings/${encodeURIComponent(key)}`, {
         method: 'DELETE'
@@ -1136,32 +1741,63 @@ export const deleteAppSetting = async (key: string): Promise<void> => {
 // BACKUP & RESET
 // ----------------------------------------------------
 export const fetchBackup = async (): Promise<Record<string, any[]>> => {
-  try {
-    return await fetchJson<Record<string, any[]>>(`${API_BASE}/backup`);
-  } catch {
-    return {
-      students: getLocalStudents(),
-      teachers: getLocalTeachers(),
-      sessions: getLocalSessions(),
-      convocations: getLocalConvocations(),
-      evening_slots: getLocalEveningSlots(),
-      staff_members: getLocalStaffMembers(),
-      staff_attendance: getLocalStaffAttendance()
-    };
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      return await fetchJson<Record<string, any[]>>(`${API_BASE}/backup`);
+    } catch {
+      // fallback
+    }
   }
+
+  return {
+    students: getLocalStudents(),
+    teachers: getLocalTeachers(),
+    sessions: getLocalSessions(),
+    convocations: getLocalConvocations(),
+    evening_slots: getLocalEveningSlots(),
+    staff_members: getLocalStaffMembers(),
+    staff_attendance: getLocalStaffAttendance()
+  };
 };
 
 export const restoreBackup = async (data: Record<string, any[]>): Promise<void> => {
-  // Always update local storage so data is restored immediately
   restoreBackupToLocalStorage(data);
 
+  // Firestore Cloud restoration
   try {
-    await fetchJson(`${API_BASE}/restore`, {
-      method: 'POST',
-      body: JSON.stringify(data)
-    });
-  } catch {
-    // If running on static host like Vercel without Express, local storage is the persistence layer
+    if (data.students && Array.isArray(data.students)) {
+      await batchUpsertStudentsApi(data.students, '2026-2027');
+    }
+    if (data.sessions && Array.isArray(data.sessions)) {
+      for (const s of data.sessions) {
+        if (s.id) await setDoc(doc(firestoreDb, 'sessions', s.id), sessionToRow(s), { merge: true });
+      }
+    }
+    if (data.convocations && Array.isArray(data.convocations)) {
+      for (const c of data.convocations) {
+        if (c.id) await setDoc(doc(firestoreDb, 'convocations', c.id), convocationToRow(c), { merge: true });
+      }
+    }
+    if (data.teachers && Array.isArray(data.teachers)) {
+      for (const t of data.teachers) {
+        if (t.id) await setDoc(doc(firestoreDb, 'teachers', t.id), { id: t.id, name: t.name }, { merge: true });
+      }
+    }
+  } catch (fsErr) {
+    console.warn('Firestore restoreBackup error:', fsErr);
+  }
+
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/restore`, {
+        method: 'POST',
+        body: JSON.stringify(data)
+      });
+    } catch {
+      // Handled
+    }
   }
 };
 
@@ -1179,12 +1815,15 @@ export const resetDatabaseApi = async (type: 'calendar' | 'all'): Promise<void> 
     setLocalEveningSlots([]);
   }
 
-  try {
-    await fetchJson(`${API_BASE}/reset`, {
-      method: 'POST',
-      body: JSON.stringify({ type })
-    });
-  } catch {
-    // Handled by local storage
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/reset`, {
+        method: 'POST',
+        body: JSON.stringify({ type })
+      });
+    } catch {
+      // Handled by local storage
+    }
   }
 };
