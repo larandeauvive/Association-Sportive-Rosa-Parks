@@ -3,9 +3,10 @@ import { Session, PublicStudent } from '../types';
 import { 
   X, Search, Check, CheckCircle2, Calendar, Clock, 
   MapPin, Users, Trophy, AlertCircle, ArrowLeft, Loader2,
-  Sparkles, UserCheck
+  Sparkles, UserCheck, Timer, Lock
 } from 'lucide-react';
 import { getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
+import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
 
 interface SimplifiedEnrollmentModalProps {
   isOpen: boolean;
@@ -91,6 +92,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   const isPast = new Date(session.date).setHours(23, 59, 59, 999) < new Date().getTime();
   const isTeamMode = !!session.isTeamRegistration;
   const requiredTeamSize = session.teamSize || 4;
+  const regStatus = getSessionRegistrationStatus(session);
 
   const getStudentMissingRequirements = (student: PublicStudent): string[] => {
     const missing: string[] = [];
@@ -112,6 +114,15 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
 
   const handleEnroll = async (student: PublicStudent) => {
     if (!session || isFull || isPast) return;
+
+    if (regStatus.isClosed) {
+      setErrorMessage(`Inscriptions closes pour cette séance (${regStatus.statusLabel}).`);
+      return;
+    }
+    if (regStatus.notYetOpen) {
+      setErrorMessage(`Les inscriptions ne sont pas encore ouvertes (${regStatus.statusLabel}).`);
+      return;
+    }
 
     const missing = getStudentMissingRequirements(student);
     if (missing.length > 0) {

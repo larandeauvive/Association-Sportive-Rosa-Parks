@@ -112,11 +112,15 @@ export interface Session {
   meetingLocation?: string; // Lieu de RDV
   cafeteriaTime?: string; // Heure de passage au self
   returnTime?: string; // Heure de retour
-  registrationOpenDate?: string; // Date d'ouverture des inscriptions
-  registrationCloseDate?: string; // Date de fermeture des inscriptions
+  registrationOpenDate?: string; // Date d'ouverture des inscriptions (calendrier fixe)
+  registrationCloseDate?: string; // Date de fermeture des inscriptions (calendrier fixe)
+  registrationDaysBefore?: number; // Nombre de jours avant la séance pour clore les inscriptions (ex: 1 = veille, 2 = 2 jours avant)
+  registrationCloseTime?: string; // Heure limite de clôture le jour J-X (ex: "18:00")
+  registrationOpenDaysBefore?: number; // Nombre de jours avant la séance pour ouvrir les inscriptions (ex: 7 = 1 semaine avant)
   isTeamRegistration?: boolean; // Inscription en équipe activée
   teamSize?: number; // Nombre d'élèves requis par équipe pour valider l'inscription
   teams?: SessionTeam[]; // Liste des équipes enregistrées
+  recurrenceGroupId?: string; // Identifiant unique pour lier un groupe de séances récurrentes
 }
 
 export interface ColumnDefinition {

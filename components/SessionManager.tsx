@@ -3,7 +3,8 @@ import { Student, Session } from '../types';
 import { 
   PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, 
   Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
-  ChevronDown, ChevronRight, History, ArrowUpDown, Clock
+  ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
+  Repeat, CalendarDays, Timer, Sparkles, Info
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -11,6 +12,10 @@ import {
   getTeachersList, saveConvocationApi, deleteTeamFromSession, 
   enrollTeamInSession 
 } from '../lib/db';
+import { 
+  getSeriesSessions, getFutureSeriesSessions, 
+  formatRegistrationRule, getSessionRegistrationStatus 
+} from '../lib/sessionUtils';
 
 interface SessionManagerProps {
   students: Student[];
@@ -29,6 +34,16 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [pastSortOrder, setPastSortOrder] = useState<'asc' | 'desc'>('asc');
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [deleteScope, setDeleteScope] = useState<'single' | 'future' | 'all'>('single');
+
+  // Gestion de la récurrence & modification groupée
+  const [updateScope, setUpdateScope] = useState<'all' | 'future' | 'single'>('all');
+  const [isSaving, setIsSaving] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+
+  // Modalités d'inscription (Délai en jours vs Date calendrier vs Sans date)
+  const [deadlineMode, setDeadlineMode] = useState<'relative' | 'fixed' | 'none'>('relative');
+  const [enableOpenDeadline, setEnableOpenDeadline] = useState(false);
 
   const todayStr = useMemo(() => {
     const now = new Date();
@@ -51,6 +66,13 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
 
   const newSession = formData;
   const [editingSession, setEditingSession] = useState<Session | null>(null);
+
+  // Effacer la notification après 4 secondes
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => setNotification(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notification]);
 
   const fetchSessionManagerData = useCallback(async () => {
     try {
@@ -87,32 +109,158 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     fetchSessionManagerData();
   }, [fetchSessionManagerData]);
 
+  const openCreateForm = () => {
+    setFormData({
+      name: 'AS Musculation',
+      date: new Date().toISOString().slice(0, 10),
+      time: '13:30',
+      endTime: '15:30',
+      location: 'Salle de musculation',
+      requireLicense: false,
+      requirePaid: false,
+      enrolledStudentIds: [],
+      presentStudentIds: [],
+      registrationDaysBefore: 1,
+      registrationCloseTime: '18:00'
+    });
+    setIsRecurring(false);
+    setRecurrenceCount(4);
+    setDeadlineMode('relative');
+    setEnableOpenDeadline(false);
+    setUpdateScope('all');
+    setIsCreating(true);
+  };
+
+  const openEditForm = (sess: Session) => {
+    setFormData({ ...sess });
+    const series = getSeriesSessions(sess, sessions);
+    setUpdateScope(series.length > 1 ? 'all' : 'single');
+    setIsRecurring(false);
+
+    if (sess.registrationDaysBefore !== undefined && sess.registrationDaysBefore !== null) {
+      setDeadlineMode('relative');
+      setEnableOpenDeadline(sess.registrationOpenDaysBefore !== undefined && sess.registrationOpenDaysBefore !== null);
+    } else if (sess.registrationCloseDate) {
+      setDeadlineMode('fixed');
+      setEnableOpenDeadline(false);
+    } else {
+      setDeadlineMode('none');
+      setEnableOpenDeadline(false);
+    }
+
+    setIsCreating(true);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.date) return;
+    setIsSaving(true);
+
     try {
+      // Préparation des paramètres de délai d'inscription
+      let regDaysBefore: number | undefined = undefined;
+      let regCloseTime: string | undefined = undefined;
+      let regOpenDaysBefore: number | undefined = undefined;
+      let regCloseDate: string | undefined = undefined;
+      let regOpenDate: string | undefined = undefined;
+
+      if (deadlineMode === 'relative') {
+        regDaysBefore = formData.registrationDaysBefore !== undefined && formData.registrationDaysBefore !== null 
+          ? Number(formData.registrationDaysBefore) 
+          : 1;
+        regCloseTime = formData.registrationCloseTime || '18:00';
+        if (enableOpenDeadline && formData.registrationOpenDaysBefore !== undefined && formData.registrationOpenDaysBefore !== null) {
+          regOpenDaysBefore = Number(formData.registrationOpenDaysBefore);
+        }
+      } else if (deadlineMode === 'fixed') {
+        regCloseDate = formData.registrationCloseDate || undefined;
+        regOpenDate = formData.registrationOpenDate || undefined;
+      }
+
+      const commonFields: Partial<Session> = {
+        name: (formData.name || '').trim(),
+        time: formData.time || '13:30',
+        endTime: formData.endTime || undefined,
+        location: formData.location || undefined,
+        teacherIds: formData.teacherIds || [],
+        needSnack: !!formData.needSnack,
+        description: formData.description || undefined,
+        maxParticipants: formData.maxParticipants ? Number(formData.maxParticipants) : undefined,
+        targetAudience: formData.targetAudience || 'all',
+        requireLicense: !!formData.requireLicense,
+        requireParentalAuth: !!formData.requireParentalAuth,
+        requireSwimmingCertificate: !!formData.requireSwimmingCertificate,
+        requirePaid: !!formData.requirePaid,
+        isTeamRegistration: !!formData.isTeamRegistration,
+        teamSize: formData.isTeamRegistration ? (Number(formData.teamSize) || 4) : undefined,
+        meetingTime: formData.meetingTime || undefined,
+        meetingLocation: formData.meetingLocation || undefined,
+        cafeteriaTime: formData.cafeteriaTime || undefined,
+        returnTime: formData.returnTime || undefined,
+        schoolYear: activeYear,
+        registrationDaysBefore: regDaysBefore,
+        registrationCloseTime: regCloseTime,
+        registrationOpenDaysBefore: regOpenDaysBefore,
+        registrationCloseDate: regCloseDate,
+        registrationOpenDate: regOpenDate
+      };
+
       if (formData.id) {
         // Mode modification
-        await saveSessionApi({
-          ...formData,
-          schoolYear: activeYear,
-          requireLicense: !!formData.requireLicense,
-          requireParentalAuth: !!formData.requireParentalAuth,
-          requireSwimmingCertificate: !!formData.requireSwimmingCertificate,
-          requirePaid: !!formData.requirePaid,
-          isTeamRegistration: !!formData.isTeamRegistration,
-          teamSize: formData.isTeamRegistration ? (Number(formData.teamSize) || 4) : undefined
-        });
+        const currentSeries = getSeriesSessions(formData, sessions);
+        const hasSeries = currentSeries.length > 1;
+
+        if (hasSeries && (updateScope === 'all' || updateScope === 'future')) {
+          const targets = updateScope === 'all' 
+            ? currentSeries 
+            : currentSeries.filter(s => (s.date || '') >= (formData.date || ''));
+
+          // Assurer un même recurrenceGroupId partagé pour toute la série
+          const sharedGroupId = formData.recurrenceGroupId || 
+            currentSeries.find(s => s.recurrenceGroupId)?.recurrenceGroupId || 
+            `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+          for (const target of targets) {
+            await saveSessionApi({
+              ...target,
+              ...commonFields,
+              recurrenceGroupId: sharedGroupId,
+              id: target.id,
+              date: target.date, // Conserve sa propre date de calendrier hebdomadaire
+              schoolYear: target.schoolYear || activeYear,
+              enrolledStudentIds: target.enrolledStudentIds || [],
+              presentStudentIds: target.presentStudentIds || [],
+              teams: target.teams || [],
+              convocationId: target.convocationId
+            });
+          }
+
+          setNotification(`${targets.length} séances du créneau « ${formData.name} » ont été mises à jour simultanément !`);
+        } else {
+          // Modification de cette séance uniquement
+          await saveSessionApi({
+            ...formData,
+            ...commonFields,
+            id: formData.id,
+            date: formData.date
+          });
+          setNotification(`Séance du ${formData.date} mise à jour avec succès.`);
+        }
+
         setIsCreating(false);
         await fetchSessionManagerData();
         return;
       }
 
+      // Mode création
       let firstDocId: string | null = null;
       const count = isRecurring ? Math.max(1, recurrenceCount) : 1;
-      
+      const newRecurrenceGroupId = isRecurring 
+        ? `rec_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+        : undefined;
+
       for (let i = 0; i < count; i++) {
-        let dateStr = formData.date;
+        let dateStr = formData.date || todayStr;
         if (i > 0) {
           const parts = (formData.date || '').split('-');
           if (parts.length === 3) {
@@ -124,44 +272,70 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
             dateStr = `${y}-${m}-${day}`;
           }
         }
-        
+
         const created = await saveSessionApi({
-          ...formData,
+          ...commonFields,
           date: dateStr,
-          schoolYear: activeYear,
+          recurrenceGroupId: newRecurrenceGroupId,
           enrolledStudentIds: [],
           presentStudentIds: [],
-          requireLicense: !!formData.requireLicense,
-          requireParentalAuth: !!formData.requireParentalAuth,
-          requireSwimmingCertificate: !!formData.requireSwimmingCertificate,
-          requirePaid: !!formData.requirePaid,
-          isTeamRegistration: !!formData.isTeamRegistration,
-          teamSize: formData.isTeamRegistration ? (Number(formData.teamSize) || 4) : undefined,
           teams: []
         });
 
         if (i === 0 && created?.id) firstDocId = created.id;
       }
-      
+
       if (firstDocId) setActiveSessionId(firstDocId);
       setIsCreating(false);
+      setNotification(
+        count > 1 
+          ? `Série créée : ${count} séances consécutives pour « ${formData.name} » avec clôture automatique !`
+          : `Séance « ${formData.name} » créée avec succès.`
+      );
       await fetchSessionManagerData();
     } catch (error: any) {
       console.error('Erreur enregistrement séance:', error);
       alert("Erreur lors de l'enregistrement de la séance : " + (error?.message || 'Erreur inattendue'));
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const confirmDelete = async () => {
     if (!sessionToDelete) return;
+    const target = sessions.find(s => s.id === sessionToDelete);
+    if (!target) {
+      setSessionToDelete(null);
+      return;
+    }
+
+    const series = getSeriesSessions(target, sessions);
+    const hasSeries = series.length > 1;
+
     try {
-      await deleteSessionApi(sessionToDelete);
+      if (hasSeries && deleteScope === 'all') {
+        for (const s of series) {
+          await deleteSessionApi(s.id);
+        }
+        setNotification(`Toutes les ${series.length} séances du créneau « ${target.name} » ont été supprimées.`);
+      } else if (hasSeries && deleteScope === 'future') {
+        const futureTargets = series.filter(s => (s.date || '') >= (target.date || ''));
+        for (const s of futureTargets) {
+          await deleteSessionApi(s.id);
+        }
+        setNotification(`${futureTargets.length} séances futures du créneau ont été supprimées.`);
+      } else {
+        await deleteSessionApi(target.id);
+        setNotification(`Séance du ${target.date} supprimée.`);
+      }
+
       if (activeSessionId === sessionToDelete) setActiveSessionId(null);
       await fetchSessionManagerData();
     } catch (err) {
       console.error(err);
     }
     setSessionToDelete(null);
+    setDeleteScope('single');
   };
 
   const toggleEnrollment = async (studentId: string) => {
@@ -296,6 +470,9 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   const renderSessionCard = (s: Session, isPast = false) => {
     const isSelected = activeSessionId === s.id && !isCreating;
     const isToday = s.date === todayStr;
+    const series = getSeriesSessions(s, sessions);
+    const isSeries = series.length > 1;
+    const deadlineText = formatRegistrationRule(s);
 
     return (
       <div 
@@ -303,7 +480,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
         onClick={() => { setActiveSessionId(s.id); setIsCreating(false); }}
         className={`p-3 rounded-xl cursor-pointer transition-all border ${
           isSelected 
-            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs' 
+            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs ring-1 ring-indigo-400' 
             : isPast
               ? 'bg-slate-50/70 border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/60'
               : isToday
@@ -317,6 +494,11 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
               <span className={`font-bold truncate text-sm ${isSelected ? 'text-indigo-950 font-extrabold' : isPast ? 'text-slate-700' : 'text-slate-900'}`}>
                 {s.name}
               </span>
+              {isSeries && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700 flex items-center gap-0.5 border border-purple-200" title={`Créneau récurrent (${series.length} séances)`}>
+                  <Repeat className="w-2.5 h-2.5" /> Récurrent
+                </span>
+              )}
               {isToday && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white shadow-xs">
                   Aujourd'hui
@@ -335,8 +517,14 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
               <span>•</span>
               <span>{s.time}{s.endTime ? ` - ${s.endTime}` : ''}</span>
             </div>
+            {deadlineText && deadlineText !== 'Inscriptions sans date limite' && (
+              <div className="text-[10px] text-indigo-700 font-medium mt-1 flex items-center gap-1 truncate">
+                <Timer className="w-3 h-3 text-indigo-500 shrink-0" />
+                <span className="truncate">{deadlineText}</span>
+              </div>
+            )}
             {s.teacherIds && s.teacherIds.length > 0 && (
-              <div className="text-[11px] text-indigo-700 font-medium mt-1 truncate">
+              <div className="text-[11px] text-slate-600 font-medium mt-0.5 truncate">
                 Resp: {s.teacherIds.map(tid => teachers.find(t => t.id === tid)?.name).filter(Boolean).join(', ')}
               </div>
             )}
@@ -369,20 +557,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
       <div className="w-full md:w-80 flex flex-col gap-4">
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
           <button 
-            onClick={() => {
-              setFormData({
-                name: 'Entraînement',
-                date: new Date().toISOString().slice(0, 10),
-                time: '13:30',
-                requireLicense: false,
-                requirePaid: false,
-                enrolledStudentIds: [],
-                presentStudentIds: []
-              });
-              setIsRecurring(false);
-              setRecurrenceCount(4);
-              setIsCreating(true);
-            }}
+            onClick={openCreateForm}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-4 rounded-lg font-semibold hover:bg-slate-800 transition shadow-sm cursor-pointer"
           >
             <PlusCircle className="w-5 h-5" /> Nouvelle Séance
@@ -518,17 +693,109 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
             </div>
             
             <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+              {/* BANNIÈRE DE GESTION DE CRÉNEAU RÉCURRENT LORS DE LA MODIFICATION */}
+              {formData.id && (() => {
+                const currentSeries = getSeriesSessions(formData, sessions);
+                if (currentSeries.length <= 1) return null;
+                const futureTargets = currentSeries.filter(s => (s.date || '') >= (formData.date || ''));
+
+                return (
+                  <div className="bg-gradient-to-r from-purple-50 via-indigo-50 to-blue-50 border-2 border-purple-300 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-xs animate-in fade-in">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-purple-600 text-white rounded-xl shrink-0 mt-0.5 shadow-xs">
+                        <Repeat className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-slate-900 text-base">
+                            Créneau récurrent détecté : « {formData.name} »
+                          </h3>
+                          <span className="text-xs px-2.5 py-0.5 bg-purple-100 text-purple-800 rounded-full font-black border border-purple-200">
+                            {currentSeries.length} séances au total
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                          Ce créneau est répété chaque semaine. Vous pouvez mettre à jour l'ensemble des séances en une seule fois (horaires, lieu, enseignants responsables, règles et délais d'inscription) tout en préservant le calendrier et les présences de chaque semaine.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-1">
+                      <label className="block text-xs font-bold text-purple-950 uppercase tracking-wider mb-2">
+                        Périmètre des modifications à enregistrer :
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setUpdateScope('all')}
+                          className={`text-left p-3 rounded-xl border-2 text-xs transition-all cursor-pointer ${
+                            updateScope === 'all'
+                              ? 'bg-purple-600 text-white border-purple-600 font-bold shadow-sm ring-2 ring-purple-300'
+                              : 'bg-white text-slate-700 border-purple-200 hover:border-purple-400 hover:bg-purple-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-black text-sm">Toutes les séances</span>
+                            <Repeat className="w-4 h-4 opacity-80" />
+                          </div>
+                          <p className={updateScope === 'all' ? 'text-purple-100 text-[11px]' : 'text-slate-500 text-[11px]'}>
+                            Modifier les {currentSeries.length} séances du créneau pour toute l'année
+                          </p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setUpdateScope('future')}
+                          className={`text-left p-3 rounded-xl border-2 text-xs transition-all cursor-pointer ${
+                            updateScope === 'future'
+                              ? 'bg-purple-600 text-white border-purple-600 font-bold shadow-sm ring-2 ring-purple-300'
+                              : 'bg-white text-slate-700 border-purple-200 hover:border-purple-400 hover:bg-purple-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-black text-sm">Cette séance et suivantes</span>
+                            <CalendarDays className="w-4 h-4 opacity-80" />
+                          </div>
+                          <p className={updateScope === 'future' ? 'text-purple-100 text-[11px]' : 'text-slate-500 text-[11px]'}>
+                            Modifier les {futureTargets.length} séances restantes à venir
+                          </p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setUpdateScope('single')}
+                          className={`text-left p-3 rounded-xl border-2 text-xs transition-all cursor-pointer ${
+                            updateScope === 'single'
+                              ? 'bg-purple-600 text-white border-purple-600 font-bold shadow-sm ring-2 ring-purple-300'
+                              : 'bg-white text-slate-700 border-purple-200 hover:border-purple-400 hover:bg-purple-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-black text-sm">Cette séance uniquement</span>
+                            <CheckCircle2 className="w-4 h-4 opacity-80" />
+                          </div>
+                          <p className={updateScope === 'single' ? 'text-purple-100 text-[11px]' : 'text-slate-500 text-[11px]'}>
+                            Uniquement la séance du {formData.date}
+                          </p>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Nom de la séance</label>
                 <input 
                   type="text" 
                   required
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-900"
                   value={formData.name || ''}
                   onChange={e => setFormData({...formData, name: e.target.value})}
-                  placeholder="Ex: Entraînement Futsal"
+                  placeholder="Ex: AS Musculation, Entraînement Futsal, etc."
                 />
               </div>
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Heure de RDV</label>
@@ -569,13 +836,16 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   />
                 </div>
               </div>
+
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Date de la séance</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">
+                    {formData.id && updateScope !== 'single' ? 'Date de référence' : 'Date de la séance'}
+                  </label>
                   <input 
                     type="date" 
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
                     value={formData.date || ''}
                     onChange={e => setFormData({...formData, date: e.target.value})}
                   />
@@ -585,7 +855,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   <input 
                     type="time" 
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
                     value={formData.time || ''}
                     onChange={e => setFormData({...formData, time: e.target.value})}
                   />
@@ -594,7 +864,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Fin (Séance)</label>
                   <input 
                     type="time" 
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 font-semibold"
                     value={formData.endTime || ''}
                     onChange={e => setFormData({...formData, endTime: e.target.value})}
                   />
@@ -608,44 +878,46 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   value={formData.location || ''}
                   onChange={e => setFormData({...formData, location: e.target.value})}
-                  placeholder="Ex: Stade municipal"
+                  placeholder="Ex: Salle de musculation, Halle des sports..."
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Informations supplémentaires</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Informations supplémentaires / consignes</label>
                 <textarea 
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   value={formData.description || ''}
                   onChange={e => setFormData({...formData, description: e.target.value})}
-                  placeholder="Ex: N'oubliez pas les gourdes..."
+                  placeholder="Ex: Prévoir serviette et bouteille d'eau obligatoires..."
                   rows={2}
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Nombre maximum de participants (optionnel)</label>
-                <input 
-                  type="number" 
-                  min="1"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={formData.maxParticipants || ''}
-                  onChange={e => setFormData({...formData, maxParticipants: e.target.value ? parseInt(e.target.value) : undefined})}
-                  placeholder="Laisser vide pour illimité"
-                />
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Nombre maximum de participants (optionnel)</label>
+                  <input 
+                    type="number" 
+                    min="1"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={formData.maxParticipants || ''}
+                    onChange={e => setFormData({...formData, maxParticipants: e.target.value ? parseInt(e.target.value) : undefined})}
+                    placeholder="Laisser vide pour illimité"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1">Public Cible</label>
-                <select 
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={formData.targetAudience || 'all'}
-                  onChange={e => setFormData({...formData, targetAudience: e.target.value as any})}
-                >
-                  <option value="all">Tous (Élèves et Adultes)</option>
-                  <option value="students">Élèves uniquement</option>
-                  <option value="adults">Adultes/Encadrants uniquement</option>
-                </select>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Public Cible</label>
+                  <select 
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={formData.targetAudience || 'all'}
+                    onChange={e => setFormData({...formData, targetAudience: e.target.value as any})}
+                  >
+                    <option value="all">Tous (Élèves et Adultes)</option>
+                    <option value="students">Élèves uniquement</option>
+                    <option value="adults">Adultes/Encadrants uniquement</option>
+                  </select>
+                </div>
               </div>
 
               {teachers.length > 0 && (
@@ -672,25 +944,323 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Ouverture des inscriptions (optionnel)</label>
-                  <input 
-                    type="datetime-local" 
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={formData.registrationOpenDate || ''}
-                    onChange={e => setFormData({...formData, registrationOpenDate: e.target.value})}
-                  />
+              {/* SECTION CLÉ : MODALITÉS & DÉLAIS D'INSCRIPTION (Délai en jours vs Date calendrier) */}
+              <div className="bg-slate-50 p-4 sm:p-5 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-indigo-600" />
+                      Modalités & Délais d'inscription
+                    </label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Réglez les conditions de clôture et d'ouverture des inscriptions
+                    </p>
+                  </div>
+                  
+                  {/* Sélecteur de mode de délai */}
+                  <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-xs font-semibold shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeadlineMode('relative');
+                        setFormData(prev => ({
+                          ...prev,
+                          registrationDaysBefore: prev.registrationDaysBefore !== undefined && prev.registrationDaysBefore !== null ? prev.registrationDaysBefore : 1,
+                          registrationCloseTime: prev.registrationCloseTime || '18:00',
+                          registrationCloseDate: undefined,
+                          registrationOpenDate: undefined
+                        }));
+                      }}
+                      className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                        deadlineMode === 'relative' 
+                          ? 'bg-indigo-600 text-white font-bold shadow-xs' 
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      ⏱️ Délai en jours (Recommandé)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeadlineMode('fixed');
+                        setFormData(prev => ({
+                          ...prev,
+                          registrationDaysBefore: undefined,
+                          registrationCloseTime: undefined,
+                          registrationOpenDaysBefore: undefined
+                        }));
+                      }}
+                      className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                        deadlineMode === 'fixed' 
+                          ? 'bg-indigo-600 text-white font-bold shadow-xs' 
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      📅 Date calendrier fixe
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeadlineMode('none');
+                        setFormData(prev => ({
+                          ...prev,
+                          registrationDaysBefore: undefined,
+                          registrationCloseTime: undefined,
+                          registrationOpenDaysBefore: undefined,
+                          registrationCloseDate: undefined,
+                          registrationOpenDate: undefined
+                        }));
+                      }}
+                      className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                        deadlineMode === 'none' 
+                          ? 'bg-indigo-600 text-white font-bold shadow-xs' 
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Sans date limite
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">Fermeture des inscriptions (optionnel)</label>
-                  <input 
-                    type="datetime-local" 
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={formData.registrationCloseDate || ''}
-                    onChange={e => setFormData({...formData, registrationCloseDate: e.target.value})}
-                  />
-                </div>
+
+                {/* CONTENU SELON LE MODE CHOISI */}
+                {deadlineMode === 'relative' && (
+                  <div className="space-y-3 pt-1">
+                    <div className="bg-white p-3.5 rounded-xl border border-indigo-200 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                          Clôture des inscriptions avant la séance
+                        </label>
+                        <span className="text-[11px] text-indigo-700 font-bold bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                          Automatique sur chaque semaine
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Nombre de jours avant la séance (J-X)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              min="0"
+                              max="60"
+                              className="w-24 px-3 py-1.5 text-sm font-bold text-slate-900 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              value={formData.registrationDaysBefore !== undefined ? formData.registrationDaysBefore : 1}
+                              onChange={e => setFormData({
+                                ...formData, 
+                                registrationDaysBefore: e.target.value === '' ? 0 : parseInt(e.target.value, 10)
+                              })}
+                            />
+                            <span className="text-xs text-slate-700 font-semibold">
+                              {(formData.registrationDaysBefore ?? 1) === 0 
+                                ? 'jour (le jour même de la séance)' 
+                                : (formData.registrationDaysBefore ?? 1) === 1 
+                                  ? 'jour (la veille de la séance)' 
+                                  : 'jours avant la séance'}
+                            </span>
+                          </div>
+
+                          {/* Raccourcis rapides */}
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {[
+                              { label: 'J-0 (Jour même)', val: 0 },
+                              { label: 'J-1 (La veille)', val: 1 },
+                              { label: 'J-2 (2 jours)', val: 2 },
+                              { label: 'J-3 (3 jours)', val: 3 },
+                              { label: 'J-7 (1 semaine)', val: 7 }
+                            ].map(preset => (
+                              <button
+                                key={preset.val}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, registrationDaysBefore: preset.val })}
+                                className={`text-[10px] px-2.5 py-0.5 rounded-md border font-medium transition-colors cursor-pointer ${
+                                  (formData.registrationDaysBefore ?? 1) === preset.val
+                                    ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Heure limite le jour de clôture
+                          </label>
+                          <input 
+                            type="time" 
+                            className="w-full px-3 py-1.5 text-sm font-bold text-slate-900 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            value={formData.registrationCloseTime || '18:00'}
+                            onChange={e => setFormData({ ...formData, registrationCloseTime: e.target.value })}
+                          />
+
+                          {/* Heures rapides */}
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {['12:00', '18:00', '20:00'].map(t => (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, registrationCloseTime: t })}
+                                className={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                                  formData.registrationCloseTime === t
+                                    ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                            {formData.time && (
+                              <button
+                                type="button"
+                                onClick={() => setFormData({ ...formData, registrationCloseTime: formData.time })}
+                                className={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                                  formData.registrationCloseTime === formData.time
+                                    ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                Début ({formData.time})
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Aperçu concret calculé dynamiquement */}
+                      {(() => {
+                        const days = formData.registrationDaysBefore !== undefined ? Number(formData.registrationDaysBefore) : 1;
+                        const closeTime = formData.registrationCloseTime || '18:00';
+                        const sessionDateStr = formData.date || todayStr;
+                        const parts = sessionDateStr.split('-');
+                        let previewText = '';
+                        if (parts.length === 3) {
+                          const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                          d.setDate(d.getDate() - days);
+                          const closeDayStr = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+                          const sessDayStr = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+                          previewText = `Pour la séance du ${sessDayStr}, les inscriptions se fermeront le ${closeDayStr} à ${closeTime}.`;
+                        }
+                        return (
+                          <div className="bg-indigo-50/80 border border-indigo-200 rounded-lg p-3 text-xs text-indigo-950 flex items-start gap-2.5">
+                            <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-bold text-indigo-900">{previewText}</p>
+                              <p className="text-[11px] text-indigo-700 mt-0.5 leading-relaxed">
+                                ✨ Idéal pour les créneaux récurrents : chaque semaine calcule sa clôture automatiquement selon cette règle, sans avoir à ressaisir de date de calendrier !
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Ouverture des inscriptions (optionnel) */}
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input 
+                          type="checkbox"
+                          className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                          checked={enableOpenDeadline}
+                          onChange={e => {
+                            setEnableOpenDeadline(e.target.checked);
+                            if (e.target.checked && (formData.registrationOpenDaysBefore === undefined || formData.registrationOpenDaysBefore === null)) {
+                              setFormData(prev => ({ ...prev, registrationOpenDaysBefore: 7 }));
+                            }
+                          }}
+                        />
+                        <span className="text-xs font-bold text-slate-800">
+                          Restreindre l'ouverture des inscriptions à l'avance (ex: ouvrir 7 jours avant)
+                        </span>
+                      </label>
+
+                      {enableOpenDeadline && (
+                        <div className="pl-6 pt-1 space-y-2 border-t border-slate-100">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-medium text-slate-600">
+                              Ouvrir les inscriptions :
+                            </label>
+                            <input 
+                              type="number"
+                              min="1"
+                              max="60"
+                              className="w-20 px-2 py-1 text-xs font-bold border border-slate-300 rounded-lg"
+                              value={formData.registrationOpenDaysBefore !== undefined ? formData.registrationOpenDaysBefore : 7}
+                              onChange={e => setFormData({ 
+                                ...formData, 
+                                registrationOpenDaysBefore: e.target.value === '' ? 7 : parseInt(e.target.value, 10) 
+                              })}
+                            />
+                            <span className="text-xs text-slate-600 font-medium">jours avant la séance</span>
+                          </div>
+                          <div className="flex gap-1">
+                            {[
+                              { label: '3 jours avant', val: 3 },
+                              { label: '1 semaine avant (7j)', val: 7 },
+                              { label: '2 semaines avant (14j)', val: 14 }
+                            ].map(preset => (
+                              <button
+                                key={preset.val}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, registrationOpenDaysBefore: preset.val })}
+                                className={`text-[10px] px-2.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                  (formData.registrationOpenDaysBefore ?? 7) === preset.val
+                                    ? 'bg-indigo-600 text-white border-indigo-600 font-bold'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-slate-500">
+                            💡 Les élèves ne pourront s'inscrire qu'à compter de {formData.registrationOpenDaysBefore ?? 7} jours avant chaque séance.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {deadlineMode === 'fixed' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Date & heure d'ouverture (optionnel)
+                      </label>
+                      <input 
+                        type="datetime-local" 
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                        value={formData.registrationOpenDate || ''}
+                        onChange={e => setFormData({...formData, registrationOpenDate: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Date & heure de fermeture (optionnel)
+                      </label>
+                      <input 
+                        type="datetime-local" 
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                        value={formData.registrationCloseDate || ''}
+                        onChange={e => setFormData({...formData, registrationCloseDate: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {deadlineMode === 'none' && (
+                  <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
+                    <Info className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span>
+                      Les inscriptions resteront ouvertes en permanence jusqu'à l'heure de début de la séance.
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Éléments nécessaires pour s'inscrire */}
@@ -814,35 +1384,58 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
 
               {!formData.id && (
                 <div className="border-t border-slate-200 pt-4 mt-4">
-                  <label className="flex items-center gap-2 cursor-pointer p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                  <label className="flex items-center gap-2 cursor-pointer p-3 bg-purple-50/80 border border-purple-200 rounded-xl hover:bg-purple-100/50 transition-colors">
                     <input 
                       type="checkbox" 
-                      className="rounded text-indigo-600 focus:ring-indigo-500 w-5 h-5"
+                      className="rounded text-purple-600 focus:ring-purple-500 w-5 h-5"
                       checked={isRecurring}
                       onChange={e => setIsRecurring(e.target.checked)}
                     />
-                    <span className="text-sm font-semibold text-slate-700">Répéter cette séance (toutes les semaines)</span>
+                    <div>
+                      <span className="text-sm font-bold text-purple-950 block">Répéter cette séance (créneau récurrent hebdomadaire)</span>
+                      <span className="text-xs text-purple-700 block">Ex: AS Musculation tous les mercredis</span>
+                    </div>
                   </label>
                   
                   {isRecurring && (
-                    <div className="mt-4 ml-2 pl-4 border-l-2 border-indigo-200">
-                      <label className="block text-sm font-semibold text-slate-700 mb-1">Nombre d'occurrences au total</label>
-                      <input 
-                        type="number" 
-                        min="2"
-                        max="40"
-                        className="w-32 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        value={recurrenceCount}
-                        onChange={e => setRecurrenceCount(parseInt(e.target.value) || 2)}
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Ex: 4 pour créer la séance sur 4 semaines consécutives.</p>
+                    <div className="mt-3 ml-2 pl-4 border-l-2 border-purple-300 space-y-2">
+                      <label className="block text-xs font-bold text-slate-700">Nombre total de séances hebdomadaires à générer</label>
+                      <div className="flex items-center gap-3">
+                        <input 
+                          type="number" 
+                          min="2"
+                          max="40"
+                          className="w-28 px-3 py-2 border border-slate-300 rounded-lg font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                          value={recurrenceCount}
+                          onChange={e => setRecurrenceCount(parseInt(e.target.value) || 2)}
+                        />
+                        <div className="flex gap-1">
+                          {[4, 8, 12, 16, 25].map(cnt => (
+                            <button
+                              key={cnt}
+                              type="button"
+                              onClick={() => setRecurrenceCount(cnt)}
+                              className={`text-xs px-2.5 py-1 rounded-md border font-semibold transition-colors cursor-pointer ${
+                                recurrenceCount === cnt 
+                                  ? 'bg-purple-600 text-white border-purple-600' 
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            >
+                              {cnt} sem.
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Chaque séance sera espacée de 7 jours et partagera la même règle de clôture d'inscription relative.
+                      </p>
                     </div>
                   )}
                 </div>
               )}
             </div>
 
-            <div className="p-4 border-t border-slate-100 bg-slate-50/90 flex items-center justify-end gap-3 shrink-0">
+            <div className="p-4 border-t border-slate-100 bg-slate-50/90 flex items-center justify-between gap-3 shrink-0">
               <button 
                 type="button" 
                 onClick={() => setIsCreating(false)} 
@@ -852,9 +1445,36 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
               </button>
               <button 
                 type="submit" 
-                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors shadow-sm cursor-pointer"
+                disabled={isSaving}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors shadow-sm cursor-pointer disabled:opacity-50"
               >
-                <Save className="w-4 h-4" /> {formData.id ? 'Enregistrer les modifications' : 'Enregistrer la séance'}
+                {isSaving ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Enregistrement en cours...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>
+                      {formData.id 
+                        ? (() => {
+                            const curSeries = getSeriesSessions(formData, sessions);
+                            const fut = curSeries.filter(s => (s.date || '') >= (formData.date || ''));
+                            if (curSeries.length > 1 && updateScope === 'all') {
+                              return `Modifier les ${curSeries.length} séances du créneau « ${formData.name} »`;
+                            }
+                            if (curSeries.length > 1 && updateScope === 'future') {
+                              return `Modifier les ${fut.length} séances à venir`;
+                            }
+                            return 'Enregistrer les modifications';
+                          })()
+                        : (isRecurring
+                            ? `Créer la série de ${recurrenceCount} séances`
+                            : 'Enregistrer la séance')}
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -862,8 +1482,27 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
           <div className="flex flex-col h-full">
             <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
               <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-2xl font-bold text-slate-900">{activeSession.name}</h2>
+                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                  <h2 className="text-2xl font-black text-slate-900">{activeSession.name}</h2>
+                  
+                  {/* Badge créneau récurrent */}
+                  {(() => {
+                    const series = getSeriesSessions(activeSession, sessions);
+                    if (series.length > 1) {
+                      return (
+                        <button
+                          onClick={() => openEditForm(activeSession)}
+                          className="bg-purple-100 hover:bg-purple-200 text-purple-800 text-xs font-bold px-2.5 py-1 rounded-full border border-purple-200 flex items-center gap-1.5 cursor-pointer transition-colors"
+                          title="Cliquez pour modifier l'ensemble des séances du créneau"
+                        >
+                          <Repeat className="w-3.5 h-3.5 text-purple-700" />
+                          <span>Créneau récurrent ({series.length} séances)</span>
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   {activeSession.isTeamRegistration && (
                     <span className="bg-purple-100 text-purple-800 text-xs font-bold px-2.5 py-1 rounded-full border border-purple-200 flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-purple-700" />
@@ -871,7 +1510,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                     </span>
                   )}
                   {activeSession.requirePaid && (
-                    <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full border border-emerald-200">💳 Cotisation à jour requise</span>
+                    <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full border border-emerald-200">💳 Cotisation requise</span>
                   )}
                   {activeSession.requireLicense && (
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-0.5 rounded-full border border-indigo-200">🪪 Licence requise</span>
@@ -886,9 +1525,10 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                     <span className="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-1 rounded-full border border-amber-200">Goûter à prévoir</span>
                   )}
                 </div>
+
                 <div className="flex flex-col gap-1 mt-2">
                   <p className="text-slate-600 font-medium text-sm">
-                    📅 {new Date(activeSession.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} • 
+                    📅 {new Date(activeSession.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} • 
                     🕒 {activeSession.time} {activeSession.endTime ? `- ${activeSession.endTime}` : ''}
                   </p>
                   {activeSession.location && (
@@ -899,33 +1539,65 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                       {activeSession.description}
                     </p>
                   )}
+
+                  {/* Règle & État d'inscription en direct */}
+                  {(() => {
+                    const regStatus = getSessionRegistrationStatus(activeSession);
+                    const ruleStr = formatRegistrationRule(activeSession);
+
+                    return (
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-900">
+                          <Timer className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                          <span>Règle : {ruleStr}</span>
+                        </span>
+
+                        {regStatus.notYetOpen && (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                            <span>⏳</span>
+                            <span>{regStatus.statusLabel}</span>
+                          </span>
+                        )}
+                        {regStatus.isClosed && (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-slate-700">
+                            <span>🔒</span>
+                            <span>{regStatus.statusLabel}</span>
+                          </span>
+                        )}
+                        {regStatus.isOpen && (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
+                            <span>🟢</span>
+                            <span>{regStatus.statusLabel}</span>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
+
                 <button 
                   onClick={() => {
                     const url = `${window.location.origin}?enroll=${activeSession.id}`;
                     navigator.clipboard.writeText(url);
                     alert('Lien copié : ' + url);
                   }}
-                  className="mt-3 flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+                  className="mt-3 flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
                 >
-                  <Link2 className="w-4 h-4" /> Copier le lien d'inscription
+                  <Link2 className="w-4 h-4" /> Copier le lien d'inscription publique
                 </button>
               </div>
-              <div className="flex items-center gap-1">
+
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button 
-                  onClick={() => {
-                    setFormData({ ...activeSession });
-                    setIsRecurring(false);
-                    setIsCreating(true);
-                  }}
-                  className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                  title="Modifier les paramètres de la séance"
+                  onClick={() => openEditForm(activeSession)}
+                  className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer border border-indigo-100 hover:border-indigo-300"
+                  title="Modifier cette séance ou la série complète"
                 >
                   <Edit2 className="w-5 h-5" />
                 </button>
                 <button 
                   onClick={() => setSessionToDelete(activeSession.id)}
-                  className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                  className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer border border-red-100 hover:border-red-300"
                   title="Supprimer la séance"
                 >
                   <Trash2 className="w-5 h-5" />
@@ -1118,13 +1790,134 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
         )}
       </div>
 
-      <ConfirmDialog 
-        isOpen={!!sessionToDelete}
-        title="Supprimer la séance"
-        message="Êtes-vous sûr de vouloir supprimer cette séance ? Cette action est irréversible et supprimera également les données de pointage associées."
-        onConfirm={confirmDelete}
-        onCancel={() => setSessionToDelete(null)}
-      />
+      {/* MODALE DE SUPPRESSION AVEC GESTION DE CRÉNEAU RÉCURRENT */}
+      {sessionToDelete && (() => {
+        const target = sessions.find(s => s.id === sessionToDelete);
+        if (!target) return null;
+        const series = getSeriesSessions(target, sessions);
+        const futureSeries = series.filter(s => (s.date || '') >= (target.date || ''));
+
+        if (series.length > 1) {
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-red-100 text-red-600 rounded-xl">
+                    <Trash2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-lg">Supprimer des séances</h3>
+                    <p className="text-xs text-slate-500">
+                      Créneau récurrent « {target.name} » ({series.length} séances au total)
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-sm text-slate-600">
+                  Cette séance fait partie d'une série récurrente. Choisissez quelles séances vous souhaitez supprimer :
+                </p>
+
+                <div className="space-y-2">
+                  <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    deleteScope === 'single'
+                      ? 'bg-red-50 border-red-300 text-red-950 font-semibold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}>
+                    <input 
+                      type="radio" 
+                      name="deleteScope" 
+                      checked={deleteScope === 'single'} 
+                      onChange={() => setDeleteScope('single')}
+                      className="mt-1 text-red-600 focus:ring-red-500"
+                    />
+                    <div>
+                      <span className="block text-sm font-bold">Uniquement cette séance</span>
+                      <span className="block text-xs text-slate-500">Séance du {target.date}</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    deleteScope === 'future'
+                      ? 'bg-red-50 border-red-300 text-red-950 font-semibold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}>
+                    <input 
+                      type="radio" 
+                      name="deleteScope" 
+                      checked={deleteScope === 'future'} 
+                      onChange={() => setDeleteScope('future')}
+                      className="mt-1 text-red-600 focus:ring-red-500"
+                    />
+                    <div>
+                      <span className="block text-sm font-bold">Cette séance et les séances suivantes</span>
+                      <span className="block text-xs text-slate-500">{futureSeries.length} séance(s) à partir du {target.date}</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                    deleteScope === 'all'
+                      ? 'bg-red-50 border-red-300 text-red-950 font-semibold'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}>
+                    <input 
+                      type="radio" 
+                      name="deleteScope" 
+                      checked={deleteScope === 'all'} 
+                      onChange={() => setDeleteScope('all')}
+                      className="mt-1 text-red-600 focus:ring-red-500"
+                    />
+                    <div>
+                      <span className="block text-sm font-bold">Toutes les séances du créneau</span>
+                      <span className="block text-xs text-slate-500">Supprimer les {series.length} séances de l'année scolaire</span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button 
+                    type="button" 
+                    onClick={() => { setSessionToDelete(null); setDeleteScope('single'); }} 
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-sm transition-colors cursor-pointer"
+                  >
+                    Annuler
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={confirmDelete}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-sm transition-colors shadow-sm cursor-pointer"
+                  >
+                    Confirmer la suppression
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <ConfirmDialog 
+            isOpen={!!sessionToDelete}
+            title="Supprimer la séance"
+            message="Êtes-vous sûr de vouloir supprimer cette séance ? Cette action est irréversible et supprimera également les données de pointage associées."
+            onConfirm={confirmDelete}
+            onCancel={() => setSessionToDelete(null)}
+          />
+        );
+      })()}
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 border border-slate-700">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span className="text-sm font-semibold">{notification}</span>
+          <button 
+            onClick={() => setNotification(null)}
+            className="text-slate-400 hover:text-white text-xs font-bold ml-2 p-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

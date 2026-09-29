@@ -84,9 +84,13 @@ export function rowToSession(row: any): Session {
     returnTime: row.return_time ?? row.returnTime,
     registrationOpenDate: row.registration_open_date ?? row.registrationOpenDate,
     registrationCloseDate: row.registration_close_date ?? row.registrationCloseDate,
+    registrationDaysBefore: row.registration_days_before !== undefined && row.registration_days_before !== null ? Number(row.registration_days_before) : (row.registrationDaysBefore !== undefined && row.registrationDaysBefore !== null ? Number(row.registrationDaysBefore) : undefined),
+    registrationCloseTime: row.registration_close_time ?? row.registrationCloseTime,
+    registrationOpenDaysBefore: row.registration_open_days_before !== undefined && row.registration_open_days_before !== null ? Number(row.registration_open_days_before) : (row.registrationOpenDaysBefore !== undefined && row.registrationOpenDaysBefore !== null ? Number(row.registrationOpenDaysBefore) : undefined),
     isTeamRegistration: row.is_team_registration ?? row.isTeamRegistration ?? false,
     teamSize: row.team_size ?? row.teamSize ?? undefined,
-    teams: Array.isArray(row.teams) ? row.teams : (typeof row.teams === 'string' ? (JSON.parse(row.teams) || []) : (row.teams ?? []))
+    teams: Array.isArray(row.teams) ? row.teams : (typeof row.teams === 'string' ? (JSON.parse(row.teams) || []) : (row.teams ?? [])),
+    recurrenceGroupId: row.recurrence_group_id ?? row.recurrenceGroupId
   };
 }
 
@@ -117,9 +121,13 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.returnTime !== undefined) row.return_time = session.returnTime;
   if (session.registrationOpenDate !== undefined) row.registration_open_date = session.registrationOpenDate;
   if (session.registrationCloseDate !== undefined) row.registration_close_date = session.registrationCloseDate;
+  if (session.registrationDaysBefore !== undefined) row.registration_days_before = session.registrationDaysBefore;
+  if (session.registrationCloseTime !== undefined) row.registration_close_time = session.registrationCloseTime;
+  if (session.registrationOpenDaysBefore !== undefined) row.registration_open_days_before = session.registrationOpenDaysBefore;
   if (session.isTeamRegistration !== undefined) row.is_team_registration = session.isTeamRegistration;
   if (session.teamSize !== undefined) row.team_size = session.teamSize;
   if (session.teams !== undefined) row.teams = session.teams;
+  if (session.recurrenceGroupId !== undefined) row.recurrence_group_id = session.recurrenceGroupId;
   return row;
 }
 

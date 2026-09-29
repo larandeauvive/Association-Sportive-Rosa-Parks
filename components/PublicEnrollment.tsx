@@ -3,9 +3,11 @@ import { PublicStudent, Session } from '../types';
 import { 
   CheckCircle2, Search, AlertCircle, Users, 
   X, Trophy, Sparkles, Check, ArrowLeft,
-  Calendar, Clock, MapPin, UserCheck, Loader2
+  Calendar, Clock, MapPin, UserCheck, Loader2,
+  Timer, Lock
 } from 'lucide-react';
 import { getSession, getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
+import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
 
 interface PublicEnrollmentProps {
   sessionId: string;
@@ -108,6 +110,16 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
 
   const handleEnroll = async (student: PublicStudent) => {
     if (!session) return;
+
+    const status = getSessionRegistrationStatus(session);
+    if (status.isClosed) {
+      alert("Les inscriptions pour cette séance sont closes : " + status.statusLabel);
+      return;
+    }
+    if (status.notYetOpen) {
+      alert("Les inscriptions pour cette séance ne sont pas encore ouvertes : " + status.statusLabel);
+      return;
+    }
 
     const missing = getStudentMissingRequirements(student);
     if (missing.length > 0) {
@@ -261,6 +273,8 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const isPast = new Date(session.date).setHours(23, 59, 59, 999) < new Date().getTime();
   const isTeamMode = !!session.isTeamRegistration;
   const requiredTeamSize = session.teamSize || 4;
+  const regStatus = getSessionRegistrationStatus(session);
+  const isClosed = isFull || isPast || regStatus.isClosed || regStatus.notYetOpen;
 
   const formattedDate = new Date(session.date).toLocaleDateString('fr-FR', {
     weekday: 'long',
@@ -284,7 +298,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
         <div className="w-full bg-white rounded-3xl shadow-xl border border-slate-200/80 overflow-hidden">
           {/* EN-TÊTE COMPACT ET CLAIR SANS PARAMÈTRES SUPERFLUS */}
           <div className="p-4 sm:p-6 bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-200">
                 {isTeamMode ? '🏆 Tournoi par équipe' : 'Inscription à la séance'}
               </span>
@@ -295,6 +309,14 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
               ) : isPast ? (
                 <span className="bg-slate-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                   Passé
+                </span>
+              ) : regStatus.notYetOpen ? (
+                <span className="bg-amber-400 text-amber-950 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  Bientôt ouvert
+                </span>
+              ) : regStatus.isClosed ? (
+                <span className="bg-slate-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  Inscriptions closes
                 </span>
               ) : (
                 <span className="bg-emerald-500 text-emerald-950 text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -336,18 +358,27 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                 </>
               )}
             </div>
+
+            {/* Règle d'inscription */}
+            <div className="flex items-center gap-1.5 text-xs text-indigo-200 mt-2">
+              <Timer className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+              <span>{formatRegistrationRule(session)}</span>
+              {regStatus.isOpen && regStatus.closeDateDisplay && (
+                <span className="text-emerald-300 font-bold">• {regStatus.closeDateDisplay}</span>
+              )}
+            </div>
           </div>
 
           {/* CORPS DE L'INSCRIPTION */}
           <div className="p-4 sm:p-6 space-y-4">
-            {/* Si séance passée ou complète */}
+            {/* Si séance passée ou complète ou clôturée */}
             {isFull ? (
               <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-3">
                 <p className="font-black text-slate-800 text-base">La séance est complète</p>
                 <p className="text-xs text-slate-500">Toutes les places sont actuellement réservées.</p>
                 <button 
                   onClick={handleGoBack}
-                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors"
+                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   ← Retour au calendrier
                 </button>
@@ -357,7 +388,35 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                 <p className="font-black text-slate-800 text-base">Cette séance est passée</p>
                 <button 
                   onClick={handleGoBack}
-                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors"
+                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  ← Retour au calendrier
+                </button>
+              </div>
+            ) : regStatus.isClosed ? (
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-3">
+                <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center mx-auto">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <p className="font-black text-slate-800 text-base">Inscriptions en ligne closes</p>
+                <p className="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">{regStatus.statusLabel}</p>
+                <button 
+                  onClick={handleGoBack}
+                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  ← Retour au calendrier
+                </button>
+              </div>
+            ) : regStatus.notYetOpen ? (
+              <div className="p-6 bg-amber-50 rounded-2xl border border-amber-200 text-center space-y-3">
+                <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <p className="font-black text-amber-950 text-base">Inscriptions pas encore ouvertes</p>
+                <p className="text-xs text-amber-800 max-w-sm mx-auto leading-relaxed">{regStatus.statusLabel}</p>
+                <button 
+                  onClick={handleGoBack}
+                  className="px-5 py-2.5 bg-amber-900 text-white font-bold rounded-xl text-xs hover:bg-amber-800 transition-colors cursor-pointer"
                 >
                   ← Retour au calendrier
                 </button>

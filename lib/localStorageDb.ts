@@ -231,9 +231,13 @@ export function saveLocalSession(session: Partial<Session>): Session {
     returnTime: session.returnTime !== undefined ? session.returnTime : existing?.returnTime,
     registrationOpenDate: session.registrationOpenDate !== undefined ? session.registrationOpenDate : existing?.registrationOpenDate,
     registrationCloseDate: session.registrationCloseDate !== undefined ? session.registrationCloseDate : existing?.registrationCloseDate,
+    registrationDaysBefore: session.registrationDaysBefore !== undefined ? session.registrationDaysBefore : existing?.registrationDaysBefore,
+    registrationCloseTime: session.registrationCloseTime !== undefined ? session.registrationCloseTime : existing?.registrationCloseTime,
+    registrationOpenDaysBefore: session.registrationOpenDaysBefore !== undefined ? session.registrationOpenDaysBefore : existing?.registrationOpenDaysBefore,
     isTeamRegistration: session.isTeamRegistration !== undefined ? session.isTeamRegistration : (existing?.isTeamRegistration ?? false),
     teamSize: session.teamSize !== undefined ? session.teamSize : existing?.teamSize,
-    teams: session.teams !== undefined ? session.teams : (existing?.teams || [])
+    teams: session.teams !== undefined ? session.teams : (existing?.teams || []),
+    recurrenceGroupId: session.recurrenceGroupId !== undefined ? session.recurrenceGroupId : existing?.recurrenceGroupId
   };
 
   if (idx >= 0) {
