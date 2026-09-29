@@ -48,6 +48,8 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
       matchesStatus = isComplete && !hasLicense;
     } else if (statusFilter === 'invalid') {
       matchesStatus = !isComplete;
+    } else if (statusFilter === 'licensed_incomplete') {
+      matchesStatus = hasLicense && !isComplete;
     }
 
     return matchesSearch && matchesClass && matchesStatus;
@@ -232,6 +234,7 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
                 >
                   <option value="">Tous les statuts</option>
                   <option value="valid">Licence à jour</option>
+                  <option value="licensed_incomplete">⚠️ Licenciés avec dossier incomplet (AP ou Cotisation manquante)</option>
                   <option value="toregister">Dossier complet (à enregistrer)</option>
                   <option value="invalid">Dossier incomplet (non à jour)</option>
                 </select>

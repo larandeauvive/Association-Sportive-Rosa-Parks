@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Student, Session } from '../types';
-import { PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, Save, Link2, Edit2, ShieldCheck, AlertCircle, Search } from 'lucide-react';
+import { 
+  PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, 
+  Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
+  ChevronDown, ChevronRight, History, ArrowUpDown, Clock
+} from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
   getSessionsList, saveSessionApi, deleteSessionApi, 
@@ -21,7 +25,18 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [pastSortOrder, setPastSortOrder] = useState<'asc' | 'desc'>('asc');
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
   
   const [isCreating, setIsCreating] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -44,8 +59,25 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
         getSessionsList(activeYear)
       ]);
       setTeachers(tList);
-      sList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
+      // Tri strict par ordre chronologique (date puis heure)
+      sList.sort((a, b) => {
+        const dateCmp = (a.date || '').localeCompare(b.date || '');
+        if (dateCmp !== 0) return dateCmp;
+        return (a.time || '').localeCompare(b.time || '');
+      });
       setSessions(sList);
+
+      // Présélection automatique de la séance la plus pertinente
+      setActiveSessionId(prev => {
+        if (prev && sList.some(s => s.id === prev)) return prev;
+        const now = new Date();
+        const curDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const todaySess = sList.find(s => s.date === curDate);
+        const upcomingSess = sList.find(s => s.date > curDate);
+        const latestPast = [...sList].reverse().find(s => s.date < curDate);
+        return (todaySess || upcomingSess || latestPast || sList[0])?.id || null;
+      });
     } catch (err) {
       console.warn("Erreur chargement séances:", err);
     }
@@ -210,6 +242,127 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     });
   }, [students, searchTerm, formData.targetAudience]);
 
+  // Partitionnement chronologique : Séances à venir vs Séances passées
+  const { upcomingSessions, pastSessions } = useMemo(() => {
+    const q = sessionSearch.trim().toLowerCase();
+    const filtered = q
+      ? sessions.filter(s => 
+          (s.name || '').toLowerCase().includes(q) ||
+          (s.date || '').toLowerCase().includes(q) ||
+          (s.meetingLocation || '').toLowerCase().includes(q)
+        )
+      : sessions;
+
+    // Ordre chronologique strict (date puis heure)
+    const sorted = [...filtered].sort((a, b) => {
+      const dateCmp = (a.date || '').localeCompare(b.date || '');
+      if (dateCmp !== 0) return dateCmp;
+      return (a.time || '').localeCompare(b.time || '');
+    });
+
+    const upcoming: Session[] = [];
+    const past: Session[] = [];
+
+    sorted.forEach(s => {
+      if ((s.date || '') >= todayStr) {
+        upcoming.push(s);
+      } else {
+        past.push(s);
+      }
+    });
+
+    return {
+      upcomingSessions: upcoming,
+      pastSessions: past
+    };
+  }, [sessions, sessionSearch, todayStr]);
+
+  const displayedPastSessions = useMemo(() => {
+    if (pastSortOrder === 'desc') {
+      return [...pastSessions].reverse();
+    }
+    return pastSessions;
+  }, [pastSessions, pastSortOrder]);
+
+  // Si la séance active est dans l'historique ou s'il n'y a aucune séance à venir, ouvrir l'historique automatiquement
+  useEffect(() => {
+    if (activeSessionId && pastSessions.some(s => s.id === activeSessionId)) {
+      setIsHistoryOpen(true);
+    } else if (upcomingSessions.length === 0 && pastSessions.length > 0) {
+      setIsHistoryOpen(true);
+    }
+  }, [activeSessionId, pastSessions, upcomingSessions.length]);
+
+  const renderSessionCard = (s: Session, isPast = false) => {
+    const isSelected = activeSessionId === s.id && !isCreating;
+    const isToday = s.date === todayStr;
+
+    return (
+      <div 
+        key={s.id}
+        onClick={() => { setActiveSessionId(s.id); setIsCreating(false); }}
+        className={`p-3 rounded-xl cursor-pointer transition-all border ${
+          isSelected 
+            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs' 
+            : isPast
+              ? 'bg-slate-50/70 border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/60'
+              : isToday
+                ? 'bg-blue-50/60 border-blue-200 hover:border-blue-400'
+                : 'bg-white border-slate-200/80 hover:border-slate-300 hover:shadow-xs'
+        }`}
+      >
+        <div className="flex justify-between items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className={`font-bold truncate text-sm ${isSelected ? 'text-indigo-950 font-extrabold' : isPast ? 'text-slate-700' : 'text-slate-900'}`}>
+                {s.name}
+              </span>
+              {isToday && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white shadow-xs">
+                  Aujourd'hui
+                </span>
+              )}
+              {isPast && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600">
+                  Passée
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-slate-700">
+                {new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </span>
+              <span>•</span>
+              <span>{s.time}{s.endTime ? ` - ${s.endTime}` : ''}</span>
+            </div>
+            {s.teacherIds && s.teacherIds.length > 0 && (
+              <div className="text-[11px] text-indigo-700 font-medium mt-1 truncate">
+                Resp: {s.teacherIds.map(tid => teachers.find(t => t.id === tid)?.name).filter(Boolean).join(', ')}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
+              isPast 
+                ? 'bg-slate-100 border-slate-200 text-slate-600' 
+                : 'bg-white border-slate-200 text-slate-700'
+            }`} title="Présents / Inscrits">
+              {(s.presentStudentIds || []).length} / {(s.enrolledStudentIds || []).length}
+            </div>
+            <button 
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setSessionToDelete(s.id); }} 
+              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" 
+              title="Supprimer la séance"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col md:flex-row gap-6 min-h-[600px] h-full">
       {/* Left Sidebar: Session List */}
@@ -230,56 +383,107 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
               setRecurrenceCount(4);
               setIsCreating(true);
             }}
-            className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-4 rounded-lg font-semibold hover:bg-slate-800 transition"
+            className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-4 rounded-lg font-semibold hover:bg-slate-800 transition shadow-sm cursor-pointer"
           >
             <PlusCircle className="w-5 h-5" /> Nouvelle Séance
           </button>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-          <div className="p-4 border-b border-slate-100 bg-slate-50">
-            <h2 className="font-bold text-slate-700 flex items-center gap-2">
-              <Calendar className="w-5 h-5" /> Séances ({sessions.length})
+          <div className="p-3.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+            <h2 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+              <Calendar className="w-4 h-4 text-indigo-600" /> Séances ({sessions.length})
             </h2>
+            <span className="text-[11px] text-slate-500 font-medium">Ordre chrono</span>
           </div>
-          <div className="overflow-y-auto flex-1 p-2 space-y-2">
-            {sessions.map(s => (
-              <div 
-                key={s.id}
-                onClick={() => { setActiveSessionId(s.id); setIsCreating(false); }}
-                className={`p-3 rounded-lg cursor-pointer transition-colors border ${activeSessionId === s.id && !isCreating ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-slate-100 hover:border-slate-300'}`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className={`font-bold ${activeSessionId === s.id && !isCreating ? 'text-indigo-900' : 'text-slate-800'}`}>
-                      {s.name}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      {new Date(s.date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })} • {s.time}{s.endTime ? ` - ${s.endTime}` : ''}
-                    </div>
-                    {s.teacherIds && s.teacherIds.length > 0 && (
-                      <div className="text-xs text-indigo-600 font-medium mt-1">
-                        Resp: {s.teacherIds.map(tid => teachers.find(t => t.id === tid)?.name).filter(Boolean).join(', ')}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-xs font-medium bg-white px-2 py-1 rounded-md border border-slate-200 text-slate-600">
-                      {(s.presentStudentIds || []).length} / {(s.enrolledStudentIds || []).length}
-                    </div>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setSessionToDelete(s.id); }} 
-                      className="text-slate-400 hover:text-red-600 transition-colors" 
-                      title="Supprimer la séance"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+
+          {sessions.length > 4 && (
+            <div className="p-2 border-b border-slate-100 bg-white">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input 
+                  type="text"
+                  placeholder="Rechercher une séance..."
+                  value={sessionSearch}
+                  onChange={e => setSessionSearch(e.target.value)}
+                  className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
               </div>
-            ))}
+            </div>
+          )}
+
+          <div className="overflow-y-auto flex-1 p-2 space-y-3">
+            {/* SECTION 1 : SÉANCES À VENIR & AUJOURD'HUI */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                  À venir & aujourd'hui
+                </span>
+                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                  {upcomingSessions.length}
+                </span>
+              </div>
+
+              {upcomingSessions.map(s => renderSessionCard(s, false))}
+
+              {upcomingSessions.length === 0 && (
+                <div className="p-3 text-center text-xs text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
+                  Aucune séance future programmée.
+                </div>
+              )}
+            </div>
+
+            {/* SECTION 2 : HISTORIQUE DES SÉANCES PASSÉES (DÉROULANT) */}
+            {pastSessions.length > 0 && (
+              <div className="pt-2 border-t border-slate-200/80">
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    isHistoryOpen 
+                      ? 'bg-slate-100/90 border-slate-300 text-slate-900 shadow-xs' 
+                      : 'bg-slate-50 hover:bg-slate-100/70 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <History className={`w-4 h-4 ${isHistoryOpen ? 'text-indigo-600' : 'text-slate-500'}`} />
+                    <span className="text-xs font-bold">
+                      Historique des séances passées
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
+                      {pastSessions.length}
+                    </span>
+                  </div>
+                  {isHistoryOpen ? (
+                    <ChevronDown className="w-4 h-4 text-slate-500" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  )}
+                </button>
+
+                {isHistoryOpen && (
+                  <div className="mt-2 space-y-1.5 pl-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="flex items-center justify-between px-1.5 py-1 text-[11px] text-slate-500">
+                      <span>Tri : {pastSortOrder === 'asc' ? '📅 Chronologique' : '⏳ Récents d\'abord'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPastSortOrder(pastSortOrder === 'asc' ? 'desc' : 'asc')}
+                        className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline cursor-pointer"
+                        title="Inverser l'ordre du tri"
+                      >
+                        <ArrowUpDown className="w-3 h-3" /> Inverser
+                      </button>
+                    </div>
+
+                    {displayedPastSessions.map(s => renderSessionCard(s, true))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {sessions.length === 0 && (
-              <p className="text-sm text-slate-500 text-center py-4">Aucune séance pour cette année.</p>
+              <p className="text-sm text-slate-500 text-center py-6">Aucune séance pour cette année.</p>
             )}
           </div>
         </div>
