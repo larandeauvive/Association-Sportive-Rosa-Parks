@@ -94,7 +94,10 @@ export function rowToSession(row: any): Session {
     blockOnlineRegistration: row.block_online_registration ?? row.blockOnlineRegistration ?? false,
     directRegistrationTeacherId: row.direct_registration_teacher_id ?? row.directRegistrationTeacherId,
     directRegistrationTeacherName: row.direct_registration_teacher_name ?? row.directRegistrationTeacherName,
-    directRegistrationNotice: row.direct_registration_notice ?? row.directRegistrationNotice
+    directRegistrationNotice: row.direct_registration_notice ?? row.directRegistrationNotice,
+    attachedPdf: row.attached_pdf 
+      ? (typeof row.attached_pdf === 'string' ? JSON.parse(row.attached_pdf) : row.attached_pdf) 
+      : (row.attachedPdf || null)
   };
 }
 
@@ -136,6 +139,7 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.directRegistrationTeacherId !== undefined) row.direct_registration_teacher_id = session.directRegistrationTeacherId;
   if (session.directRegistrationTeacherName !== undefined) row.direct_registration_teacher_name = session.directRegistrationTeacherName;
   if (session.directRegistrationNotice !== undefined) row.direct_registration_notice = session.directRegistrationNotice;
+  if (session.attachedPdf !== undefined) row.attached_pdf = session.attachedPdf;
   return row;
 }
 

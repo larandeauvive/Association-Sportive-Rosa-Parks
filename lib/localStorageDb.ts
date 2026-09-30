@@ -241,7 +241,8 @@ export function saveLocalSession(session: Partial<Session>): Session {
     blockOnlineRegistration: session.blockOnlineRegistration !== undefined ? session.blockOnlineRegistration : (existing?.blockOnlineRegistration ?? false),
     directRegistrationTeacherId: session.directRegistrationTeacherId !== undefined ? session.directRegistrationTeacherId : existing?.directRegistrationTeacherId,
     directRegistrationTeacherName: session.directRegistrationTeacherName !== undefined ? session.directRegistrationTeacherName : existing?.directRegistrationTeacherName,
-    directRegistrationNotice: session.directRegistrationNotice !== undefined ? session.directRegistrationNotice : existing?.directRegistrationNotice
+    directRegistrationNotice: session.directRegistrationNotice !== undefined ? session.directRegistrationNotice : existing?.directRegistrationNotice,
+    attachedPdf: session.attachedPdf !== undefined ? session.attachedPdf : (existing?.attachedPdf || null)
   };
 
   if (idx >= 0) {

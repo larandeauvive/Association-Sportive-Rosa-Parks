@@ -125,6 +125,15 @@ export interface Session {
   directRegistrationTeacherId?: string; // ID de l'enseignant responsable pour inscription directe
   directRegistrationTeacherName?: string; // Nom de l'enseignant ("Voir l'inscription directement avec...")
   directRegistrationNotice?: string; // Mention complète affichée (ex: "Voir l'inscription directement avec M. Dupont")
+  attachedPdf?: AttachedPdfDoc | null; // Document PDF joint (ex: recueil d'infos utiles pour élèves ou enseignants)
+}
+
+export interface AttachedPdfDoc {
+  fileName: string;
+  fileSize: number; // Taille en octets
+  fileData: string; // Base64 Data URL (data:application/pdf;base64,...)
+  uploadedAt: string; // Date ISO de dépôt
+  title?: string; // Titre du document (ex: "Recueil d'infos utiles", "Règlement intérieur")
 }
 
 export interface ColumnDefinition {

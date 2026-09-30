@@ -4,7 +4,7 @@ import {
   CheckCircle2, Search, AlertCircle, Users, 
   X, Trophy, Sparkles, Check, ArrowLeft,
   Calendar, Clock, MapPin, UserCheck, Loader2,
-  Timer, Lock
+  Timer, Lock, Download, FileText
 } from 'lucide-react';
 import { getSession, getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
@@ -376,6 +376,52 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
 
           {/* CORPS DE L'INSCRIPTION */}
           <div className="p-4 sm:p-6 space-y-4">
+            {/* DOCUMENT JOINT / RECUEIL D'INFORMATIONS */}
+            {session.attachedPdf && (
+              <div className="p-3.5 sm:p-4 bg-indigo-50/90 border border-indigo-200 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 font-black text-xs shadow-2xs border border-red-200">
+                    PDF
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] sm:text-[11px] font-bold text-indigo-900 uppercase tracking-wide block">
+                      Document d'information joint
+                    </span>
+                    <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                      {session.attachedPdf.fileName}
+                    </p>
+                    <p className="text-[10px] text-slate-500">
+                      Recueil d'infos utiles pour la séance ({Math.round((session.attachedPdf.fileSize || 0) / 1024)} Ko)
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = session.attachedPdf!.fileData;
+                    link.download = session.attachedPdf!.fileName || 'recueil_informations.pdf';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl transition shadow-xs shrink-0 cursor-pointer"
+                  title="Télécharger le document d'information"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger</span>
+                </button>
+              </div>
+            )}
+
+            {/* Consignes / Description éventuelle */}
+            {session.description && (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 leading-relaxed font-medium">
+                <strong className="text-slate-900 font-bold block mb-0.5">ℹ️ Consignes & informations :</strong>
+                {session.description}
+              </div>
+            )}
+
             {/* Si inscription en ligne bloquée avec mention enseignant */}
             {session.blockOnlineRegistration ? (
               <div className="p-6 sm:p-8 bg-amber-50/90 rounded-2xl border-2 border-amber-300 text-center space-y-4 shadow-xs">

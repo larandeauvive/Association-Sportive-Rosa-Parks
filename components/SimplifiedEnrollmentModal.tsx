@@ -3,7 +3,7 @@ import { Session, PublicStudent } from '../types';
 import { 
   X, Search, Check, CheckCircle2, Calendar, Clock, 
   MapPin, Users, Trophy, AlertCircle, ArrowLeft, Loader2,
-  Sparkles, UserCheck, Timer, Lock
+  Sparkles, UserCheck, Timer, Lock, Download, FileText
 } from 'lucide-react';
 import { getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
