@@ -4,7 +4,7 @@ import {
   Users, CheckCircle, Download, Printer, Search, Settings2, 
   Database, Trash2, ArrowRightLeft, CalendarDays, Loader2, 
   PlusCircle, LogOut, KeyRound, ShieldAlert, RefreshCw, Copy, 
-  Check, CloudUpload, ExternalLink, FileText 
+  Check, CloudUpload, ExternalLink, FileText, FileSpreadsheet
 } from 'lucide-react';
 import { StatCard } from './components/StatCard';
 import { Modal } from './components/Modal';
@@ -16,6 +16,7 @@ import { ResetModal } from './components/ResetModal';
 import { EditStudentModal } from './components/EditStudentModal';
 import { ConvocationManager } from './components/ConvocationManager';
 import { SessionManager } from './components/SessionManager';
+import { ClassListingA4Modal } from './components/ClassListingA4Modal';
 import { PublicEnrollment } from './components/PublicEnrollment';
 import { LoginScreen } from './components/LoginScreen';
 import { TeacherLoginScreen } from './components/TeacherLoginScreen';
@@ -208,6 +209,7 @@ export default function App() {
   // Modals & Actions
   const [columns, setColumns] = useState<ColumnDefinition[]>(INITIAL_COLUMNS);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isClassListingOpen, setIsClassListingOpen] = useState(false);
   const [exportType, setExportType] = useState<'csv'|'print'>('csv');
   const [isBackupManagerOpen, setIsBackupManagerOpen] = useState(false);
   
@@ -796,9 +798,18 @@ export default function App() {
                 </div>
                 
                 <button 
+                  onClick={() => setIsClassListingOpen(true)}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-3.5 py-2 rounded-lg transition shadow-sm font-bold text-xs sm:text-sm cursor-pointer"
+                  title="Éditer le listing officiel par classe au format A4 avec zones à compléter et ajouts papiers"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Listing par classe (A4)</span>
+                </button>
+
+                <button 
                   disabled={selectedIds.size === 0}
                   onClick={() => { setExportType('csv'); setIsExportModalOpen(true); }}
-                  className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-3 py-2 rounded-lg hover:bg-slate-50 transition shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 bg-white text-slate-700 border border-slate-300 px-3 py-2 rounded-lg hover:bg-slate-50 transition shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Download className="w-4 h-4" /> CSV
                 </button>
@@ -898,6 +909,14 @@ export default function App() {
       <BackupManager
         isOpen={isBackupManagerOpen}
         onClose={() => setIsBackupManagerOpen(false)}
+      />
+
+      <ClassListingA4Modal 
+        isOpen={isClassListingOpen}
+        onClose={() => setIsClassListingOpen(false)}
+        students={students}
+        activeYear={activeYear}
+        onRefreshData={fetchStudents}
       />
 
       <Modal 

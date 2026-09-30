@@ -237,7 +237,11 @@ export function saveLocalSession(session: Partial<Session>): Session {
     isTeamRegistration: session.isTeamRegistration !== undefined ? session.isTeamRegistration : (existing?.isTeamRegistration ?? false),
     teamSize: session.teamSize !== undefined ? session.teamSize : existing?.teamSize,
     teams: session.teams !== undefined ? session.teams : (existing?.teams || []),
-    recurrenceGroupId: session.recurrenceGroupId !== undefined ? session.recurrenceGroupId : existing?.recurrenceGroupId
+    recurrenceGroupId: session.recurrenceGroupId !== undefined ? session.recurrenceGroupId : existing?.recurrenceGroupId,
+    blockOnlineRegistration: session.blockOnlineRegistration !== undefined ? session.blockOnlineRegistration : (existing?.blockOnlineRegistration ?? false),
+    directRegistrationTeacherId: session.directRegistrationTeacherId !== undefined ? session.directRegistrationTeacherId : existing?.directRegistrationTeacherId,
+    directRegistrationTeacherName: session.directRegistrationTeacherName !== undefined ? session.directRegistrationTeacherName : existing?.directRegistrationTeacherName,
+    directRegistrationNotice: session.directRegistrationNotice !== undefined ? session.directRegistrationNotice : existing?.directRegistrationNotice
   };
 
   if (idx >= 0) {

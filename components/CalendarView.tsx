@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Convocation, Session, Student } from '../types';
+import { Convocation, Session, Student, Teacher } from '../types';
 import { 
   getConvocationsList, getSessionsList, saveSessionApi, 
   deleteSessionApi, saveConvocationApi, deleteConvocationApi,
-  getAppSetting, getStudentsList
+  getAppSetting, getStudentsList, getTeachersList
 } from '../lib/db';
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
@@ -13,7 +13,7 @@ import { fr } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, X, Printer, Users, FileText, 
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
-  Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles
+  Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -110,8 +110,13 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [newEventIsTeamRegistration, setNewEventIsTeamRegistration] = useState(false);
   const [newEventTeamSize, setNewEventTeamSize] = useState<number | ''>(4);
   const [isSavingEvent, setIsSavingEvent] = useState(false);
-
   const [newEventGenerateConvocation, setNewEventGenerateConvocation] = useState(false);
+
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [newEventBlockOnlineRegistration, setNewEventBlockOnlineRegistration] = useState(false);
+  const [newEventDirectRegistrationTeacherId, setNewEventDirectRegistrationTeacherId] = useState('');
+  const [newEventDirectRegistrationTeacherName, setNewEventDirectRegistrationTeacherName] = useState('');
+  const [newEventDirectRegistrationNotice, setNewEventDirectRegistrationNotice] = useState('');
 
   // Événements du mois affiché, triés chronologiquement pour le mode planning/mobile
   const currentMonthEvents = useMemo(() => {
@@ -190,6 +195,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventIsTeamRegistration(!!session.isTeamRegistration);
     setNewEventTeamSize(session.teamSize || 4);
     setNewEventGenerateConvocation(!!session.convocationId);
+    setNewEventBlockOnlineRegistration(!!session.blockOnlineRegistration);
+    setNewEventDirectRegistrationTeacherId(session.directRegistrationTeacherId || '');
+    setNewEventDirectRegistrationTeacherName(session.directRegistrationTeacherName || '');
+    setNewEventDirectRegistrationNotice(session.directRegistrationNotice || '');
     setClickedDate(new Date(session.date));
     setEditingEventId(event.id);
     setIsCreatingEvent(true);
@@ -198,10 +207,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
 
   const loadCalendarData = useCallback(async () => {
     try {
-      let [convos, sessions] = await Promise.all([
+      let [convos, sessions, teachersData] = await Promise.all([
         getConvocationsList(activeYear),
-        getSessionsList(activeYear)
+        getSessionsList(activeYear),
+        getTeachersList()
       ]);
+      if (teachersData) setTeachers(teachersData);
 
       // Si le filtre par activeYear n'a rien renvoyé, charger l'ensemble pour résilience totale inter-postes
       if ((!convos || convos.length === 0) && (!sessions || sessions.length === 0)) {
@@ -352,6 +363,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventIsTeamRegistration(false);
     setNewEventTeamSize(4);
     setNewEventGenerateConvocation(false);
+    setNewEventBlockOnlineRegistration(false);
+    setNewEventDirectRegistrationTeacherId('');
+    setNewEventDirectRegistrationTeacherName('');
+    setNewEventDirectRegistrationNotice('');
     setEditingEventId(null);
     setIsCreatingEvent(true);
   };
@@ -383,7 +398,11 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           registrationOpenDate: newEventRegistrationOpenDate || null,
           registrationCloseDate: newEventRegistrationCloseDate || null,
           isTeamRegistration: newEventIsTeamRegistration,
-          teamSize: newEventIsTeamRegistration ? (Number(newEventTeamSize) || 4) : null
+          teamSize: newEventIsTeamRegistration ? (Number(newEventTeamSize) || 4) : null,
+          blockOnlineRegistration: newEventBlockOnlineRegistration,
+          directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || null) : null,
+          directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || null) : null,
+          directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null
         };
         await saveSessionApi({ ...updateData, id: editingEventId });
         
@@ -424,6 +443,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           registrationCloseDate: newEventRegistrationCloseDate || undefined,
           isTeamRegistration: newEventIsTeamRegistration,
           teamSize: newEventIsTeamRegistration ? (Number(newEventTeamSize) || 4) : undefined,
+          blockOnlineRegistration: newEventBlockOnlineRegistration,
+          directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || undefined) : undefined,
+          directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || undefined) : undefined,
+          directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || undefined) : undefined,
           teams: [],
           enrolledStudentIds: [],
           presentStudentIds: [],
@@ -1025,19 +1048,26 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                               </span>
 
                               {isPublic && isSession && !isPast && !isFull && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (rawSession) {
-                                      setEnrollingSession(rawSession);
-                                    }
-                                  }}
-                                  className="mt-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer"
-                                >
-                                  <span>M'inscrire</span>
-                                  <ChevronRight className="w-3.5 h-3.5" />
-                                </button>
+                                rawSession?.blockOnlineRegistration ? (
+                                  <span className="mt-2 text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-1 rounded-lg text-right flex items-center gap-1 shadow-2xs">
+                                    <Lock className="w-3 h-3 text-amber-700" />
+                                    {rawSession?.directRegistrationTeacherName ? `Voir ${rawSession.directRegistrationTeacherName}` : "Direct prof"}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (rawSession) {
+                                        setEnrollingSession(rawSession);
+                                      }
+                                    }}
+                                    className="mt-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <span>M'inscrire</span>
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                  </button>
+                                )
                               )}
                             </div>
                           </div>
@@ -1425,6 +1455,21 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     
                     if (isSession && !isClosed) {
                       const sess = selectedEvent.raw as Session;
+                      if (sess.blockOnlineRegistration) {
+                        return (
+                          <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-950 text-sm max-w-md mx-auto text-center space-y-2 shadow-2xs">
+                            <div className="flex items-center justify-center gap-2 font-bold text-amber-900 text-base">
+                              <Lock className="w-5 h-5 text-amber-700" />
+                              <span>Inscription en ligne bloquée</span>
+                            </div>
+                            <p className="text-xs font-semibold text-amber-800 leading-relaxed">
+                              {sess.directRegistrationNotice || (sess.directRegistrationTeacherName
+                                ? `Voir l'inscription directement avec ${sess.directRegistrationTeacherName}.`
+                                : "Voir l'inscription directement avec l'enseignant responsable.")}
+                            </p>
+                          </div>
+                        );
+                      }
                       return (
                         <button 
                           onClick={() => {
@@ -1675,6 +1720,89 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                       onChange={e => setNewEventRegistrationCloseDate(e.target.value)}
                     />
                   </div>
+                </div>
+
+                {/* OPTION : BLOQUER L'INSCRIPTION EN LIGNE AVEC MENTION ENSEIGNANT */}
+                <div className="bg-amber-50/80 border border-amber-300 rounded-xl p-3.5 space-y-2.5 shadow-2xs">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      className="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 mt-0.5"
+                      checked={newEventBlockOnlineRegistration}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        const defaultTeacher = teachers[0];
+                        setNewEventBlockOnlineRegistration(checked);
+                        if (checked && !newEventDirectRegistrationTeacherId && defaultTeacher) {
+                          setNewEventDirectRegistrationTeacherId(defaultTeacher.id);
+                          setNewEventDirectRegistrationTeacherName(defaultTeacher.name);
+                          setNewEventDirectRegistrationNotice(`Voir l'inscription directement avec ${defaultTeacher.name}`);
+                        }
+                      }}
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-amber-700" />
+                        Bloquer l'inscription en ligne (inscription directe auprès d'un enseignant)
+                      </span>
+                      <p className="text-[11px] text-amber-800 leading-tight mt-0.5">
+                        Interdit l'inscription en ligne pour cette séance et indique avec quel enseignant s'inscrire en direct.
+                      </p>
+                    </div>
+                  </label>
+
+                  {newEventBlockOnlineRegistration && (
+                    <div className="pt-2 border-t border-amber-200/90 space-y-2.5 bg-white/70 p-2.5 rounded-lg">
+                      <div>
+                        <label className="block text-[11px] font-bold text-amber-950 mb-1">
+                          Cochez l'enseignant responsable :
+                        </label>
+                        {teachers.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {teachers.map(t => {
+                              const isSelected = newEventDirectRegistrationTeacherId === t.id;
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setNewEventDirectRegistrationTeacherId(t.id);
+                                    setNewEventDirectRegistrationTeacherName(t.name);
+                                    setNewEventDirectRegistrationNotice(`Voir l'inscription directement avec ${t.name}`);
+                                  }}
+                                  className={`flex items-center gap-2 p-1.5 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer ${
+                                    isSelected 
+                                      ? 'bg-amber-600 text-white border-amber-700 shadow-xs' 
+                                      : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
+                                  }`}
+                                >
+                                  <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'border-white bg-white' : 'border-slate-400 bg-white'}`}>
+                                    {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>}
+                                  </span>
+                                  <span className="truncate">{t.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-amber-800 italic">Aucun enseignant disponible.</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-amber-950 mb-1">
+                          Mention affichée aux élèves :
+                        </label>
+                        <input 
+                          type="text"
+                          className="w-full px-2.5 py-1.5 text-xs font-bold bg-white text-amber-950 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          value={newEventDirectRegistrationNotice}
+                          onChange={e => setNewEventDirectRegistrationNotice(e.target.value)}
+                          placeholder="Ex: Voir l'inscription directement avec M. Dupont"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2 pt-1">

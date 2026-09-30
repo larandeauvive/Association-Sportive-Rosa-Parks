@@ -115,6 +115,13 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   const handleEnroll = async (student: PublicStudent) => {
     if (!session || isFull || isPast) return;
 
+    if (session.blockOnlineRegistration) {
+      setErrorMessage(session.directRegistrationNotice || (session.directRegistrationTeacherName 
+        ? `Voir l'inscription directement avec ${session.directRegistrationTeacherName}.`
+        : "Voir l'inscription directement avec l'enseignant responsable."));
+      return;
+    }
+
     if (regStatus.isClosed) {
       setErrorMessage(`Inscriptions closes pour cette séance (${regStatus.statusLabel}).`);
       return;
@@ -334,8 +341,36 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
 
         {/* CORPS DE LA FENÊTRE D'INSCRIPTION */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-4 overscroll-contain">
-          {/* Alerte si complète ou passée */}
-          {isFull ? (
+          {/* Si inscription directe auprès d'un enseignant */}
+          {session.blockOnlineRegistration ? (
+            <div className="p-6 bg-amber-50 border-2 border-amber-300 rounded-2xl text-center space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto border border-amber-200">
+                <Lock className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <span className="inline-block px-2.5 py-0.5 bg-amber-200 text-amber-900 rounded-full text-[11px] font-black uppercase tracking-wider">
+                  Inscription directe enseignant
+                </span>
+                <h3 className="font-extrabold text-amber-950 text-base sm:text-lg">
+                  {session.directRegistrationNotice || (session.directRegistrationTeacherName 
+                    ? `Voir l'inscription directement avec ${session.directRegistrationTeacherName}`
+                    : "Voir l'inscription directement avec l'enseignant responsable.")}
+                </h3>
+                <p className="text-xs text-amber-800 leading-relaxed font-medium max-w-sm mx-auto">
+                  Pour cette séance, les inscriptions ne s'effectuent pas en ligne. Merci de vous rapprocher directement de l'enseignant indiqué.
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-5 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors"
+                >
+                  Fermer
+                </button>
+              </div>
+            </div>
+          ) : isFull ? (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-center space-y-2">
               <p className="font-bold text-rose-900 text-sm">Cette séance est actuellement complète.</p>
               <p className="text-xs text-rose-700">Toutes les places disponibles ont été réservées.</p>

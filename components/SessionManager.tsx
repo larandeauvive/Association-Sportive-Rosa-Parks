@@ -4,7 +4,7 @@ import {
   PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, 
   Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
-  Repeat, CalendarDays, Timer, Sparkles, Info
+  Repeat, CalendarDays, Timer, Sparkles, Info, Lock
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -121,7 +121,11 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
       enrolledStudentIds: [],
       presentStudentIds: [],
       registrationDaysBefore: 1,
-      registrationCloseTime: '18:00'
+      registrationCloseTime: '18:00',
+      blockOnlineRegistration: false,
+      directRegistrationTeacherId: undefined,
+      directRegistrationTeacherName: undefined,
+      directRegistrationNotice: undefined
     });
     setIsRecurring(false);
     setRecurrenceCount(4);
@@ -132,7 +136,13 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   };
 
   const openEditForm = (sess: Session) => {
-    setFormData({ ...sess });
+    setFormData({ 
+      ...sess,
+      blockOnlineRegistration: !!sess.blockOnlineRegistration,
+      directRegistrationTeacherId: sess.directRegistrationTeacherId,
+      directRegistrationTeacherName: sess.directRegistrationTeacherName,
+      directRegistrationNotice: sess.directRegistrationNotice
+    });
     const series = getSeriesSessions(sess, sessions);
     setUpdateScope(series.length > 1 ? 'all' : 'single');
     setIsRecurring(false);
@@ -202,7 +212,11 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
         registrationCloseTime: regCloseTime,
         registrationOpenDaysBefore: regOpenDaysBefore,
         registrationCloseDate: regCloseDate,
-        registrationOpenDate: regOpenDate
+        registrationOpenDate: regOpenDate,
+        blockOnlineRegistration: !!formData.blockOnlineRegistration,
+        directRegistrationTeacherId: formData.blockOnlineRegistration ? formData.directRegistrationTeacherId : undefined,
+        directRegistrationTeacherName: formData.blockOnlineRegistration ? formData.directRegistrationTeacherName : undefined,
+        directRegistrationNotice: formData.blockOnlineRegistration ? formData.directRegistrationNotice : undefined
       };
 
       if (formData.id) {
@@ -507,6 +521,12 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
               {isPast && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600">
                   Passée
+                </span>
+              )}
+              {s.blockOnlineRegistration && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-0.5" title={s.directRegistrationNotice || "Inscription directe enseignant"}>
+                  <Lock className="w-2.5 h-2.5 text-amber-700" />
+                  <span>{s.directRegistrationTeacherName ? `Voir ${s.directRegistrationTeacherName}` : "Direct prof"}</span>
                 </span>
               )}
             </div>
@@ -943,6 +963,105 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   </div>
                 </div>
               )}
+
+              {/* OPTION : BLOQUER L'INSCRIPTION EN LIGNE AVEC MENTION ENSEIGNANT */}
+              <div className="bg-amber-50/80 border-2 border-amber-300 rounded-xl p-4 sm:p-5 space-y-3.5 shadow-2xs">
+                <div className="flex items-start justify-between gap-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input 
+                      type="checkbox"
+                      className="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 mt-0.5"
+                      checked={!!formData.blockOnlineRegistration}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        const defaultTeacher = teachers.find(t => (formData.teacherIds || []).includes(t.id)) || teachers[0];
+                        setFormData(prev => ({
+                          ...prev,
+                          blockOnlineRegistration: checked,
+                          directRegistrationTeacherId: checked ? (prev.directRegistrationTeacherId || defaultTeacher?.id) : prev.directRegistrationTeacherId,
+                          directRegistrationTeacherName: checked ? (prev.directRegistrationTeacherName || defaultTeacher?.name) : prev.directRegistrationTeacherName,
+                          directRegistrationNotice: checked 
+                            ? (prev.directRegistrationNotice || (defaultTeacher?.name ? `Voir l'inscription directement avec ${defaultTeacher.name}` : "Voir l'inscription directement avec l'enseignant responsable."))
+                            : prev.directRegistrationNotice
+                        }));
+                      }}
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-amber-950 uppercase tracking-wide flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-amber-700" />
+                        Bloquer l'inscription en ligne (inscription directe auprès d'un enseignant)
+                      </span>
+                      <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed font-medium">
+                        Cochez cette option pour interdire l'inscription via le site internet. Une mention officielle invitera les élèves à s'adresser directement à l'enseignant coché.
+                      </p>
+                    </div>
+                  </label>
+                  {formData.blockOnlineRegistration && (
+                    <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase rounded-full bg-amber-200 text-amber-900 border border-amber-300 shrink-0">
+                      Activé
+                    </span>
+                  )}
+                </div>
+
+                {formData.blockOnlineRegistration && (
+                  <div className="pt-3 border-t border-amber-200/90 space-y-3 bg-white/70 p-3.5 rounded-lg">
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1.5">
+                        1. Cochez l'enseignant responsable de l'inscription directe :
+                      </label>
+                      {teachers.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                          {teachers.map(t => {
+                            const isSelected = formData.directRegistrationTeacherId === t.id;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => {
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    directRegistrationTeacherId: t.id,
+                                    directRegistrationTeacherName: t.name,
+                                    directRegistrationNotice: `Voir l'inscription directement avec ${t.name}`
+                                  }));
+                                }}
+                                className={`flex items-center gap-2 p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer ${
+                                  isSelected 
+                                    ? 'bg-amber-600 text-white border-amber-700 shadow-xs' 
+                                    : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50 hover:border-amber-400'
+                                }`}
+                              >
+                                <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'border-white bg-white text-amber-700' : 'border-slate-400 bg-white'}`}>
+                                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>}
+                                </span>
+                                <span className="truncate">{t.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-amber-800 italic">Aucun enseignant configuré dans l'application.</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-bold text-amber-950">
+                          2. Mention affichée aux élèves et sur les plannings :
+                        </label>
+                        <span className="text-[10px] text-amber-700 font-medium">Texte modifiable</span>
+                      </div>
+                      <input 
+                        type="text"
+                        className="w-full px-3 py-2 text-xs font-bold bg-white text-amber-950 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                        value={formData.directRegistrationNotice || ''}
+                        onChange={e => setFormData(prev => ({ ...prev, directRegistrationNotice: e.target.value }))}
+                        placeholder="Ex: Voir l'inscription directement avec M. Dupont"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* SECTION CLÉ : MODALITÉS & DÉLAIS D'INSCRIPTION (Délai en jours vs Date calendrier) */}
               <div className="bg-slate-50 p-4 sm:p-5 rounded-xl border border-slate-200 space-y-3">
@@ -1573,6 +1692,22 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                       </div>
                     );
                   })()}
+
+                  {activeSession.blockOnlineRegistration && (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-950 flex items-start gap-2.5">
+                      <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-xs uppercase tracking-wide text-amber-900 block">
+                          🔒 Inscription en ligne bloquée
+                        </span>
+                        <span className="text-xs font-semibold text-amber-800">
+                          {activeSession.directRegistrationNotice || (activeSession.directRegistrationTeacherName 
+                            ? `Voir l'inscription directement avec ${activeSession.directRegistrationTeacherName}`
+                            : "Voir l'inscription directement avec l'enseignant responsable.")}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button 

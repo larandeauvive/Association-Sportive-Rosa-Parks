@@ -90,7 +90,11 @@ export function rowToSession(row: any): Session {
     isTeamRegistration: row.is_team_registration ?? row.isTeamRegistration ?? false,
     teamSize: row.team_size ?? row.teamSize ?? undefined,
     teams: Array.isArray(row.teams) ? row.teams : (typeof row.teams === 'string' ? (JSON.parse(row.teams) || []) : (row.teams ?? [])),
-    recurrenceGroupId: row.recurrence_group_id ?? row.recurrenceGroupId
+    recurrenceGroupId: row.recurrence_group_id ?? row.recurrenceGroupId,
+    blockOnlineRegistration: row.block_online_registration ?? row.blockOnlineRegistration ?? false,
+    directRegistrationTeacherId: row.direct_registration_teacher_id ?? row.directRegistrationTeacherId,
+    directRegistrationTeacherName: row.direct_registration_teacher_name ?? row.directRegistrationTeacherName,
+    directRegistrationNotice: row.direct_registration_notice ?? row.directRegistrationNotice
   };
 }
 
@@ -128,6 +132,10 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.teamSize !== undefined) row.team_size = session.teamSize;
   if (session.teams !== undefined) row.teams = session.teams;
   if (session.recurrenceGroupId !== undefined) row.recurrence_group_id = session.recurrenceGroupId;
+  if (session.blockOnlineRegistration !== undefined) row.block_online_registration = session.blockOnlineRegistration;
+  if (session.directRegistrationTeacherId !== undefined) row.direct_registration_teacher_id = session.directRegistrationTeacherId;
+  if (session.directRegistrationTeacherName !== undefined) row.direct_registration_teacher_name = session.directRegistrationTeacherName;
+  if (session.directRegistrationNotice !== undefined) row.direct_registration_notice = session.directRegistrationNotice;
   return row;
 }
 

@@ -274,7 +274,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const isTeamMode = !!session.isTeamRegistration;
   const requiredTeamSize = session.teamSize || 4;
   const regStatus = getSessionRegistrationStatus(session);
-  const isClosed = isFull || isPast || regStatus.isClosed || regStatus.notYetOpen;
+  const isClosed = isFull || isPast || regStatus.isClosed || regStatus.notYetOpen || !!session.blockOnlineRegistration;
 
   const formattedDate = new Date(session.date).toLocaleDateString('fr-FR', {
     weekday: 'long',
@@ -302,7 +302,12 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
               <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-200">
                 {isTeamMode ? '🏆 Tournoi par équipe' : 'Inscription à la séance'}
               </span>
-              {isFull ? (
+              {session.blockOnlineRegistration ? (
+                <span className="bg-amber-400 text-amber-950 text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                  <Lock className="w-3 h-3" />
+                  {session.directRegistrationTeacherName ? `Voir avec ${session.directRegistrationTeacherName}` : "Inscription directe"}
+                </span>
+              ) : isFull ? (
                 <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                   Complet
                 </span>
@@ -371,8 +376,35 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
 
           {/* CORPS DE L'INSCRIPTION */}
           <div className="p-4 sm:p-6 space-y-4">
-            {/* Si séance passée ou complète ou clôturée */}
-            {isFull ? (
+            {/* Si inscription en ligne bloquée avec mention enseignant */}
+            {session.blockOnlineRegistration ? (
+              <div className="p-6 sm:p-8 bg-amber-50/90 rounded-2xl border-2 border-amber-300 text-center space-y-4 shadow-xs">
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-2xs border border-amber-200">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <div className="space-y-2">
+                  <span className="inline-block px-3 py-1 bg-amber-200/80 text-amber-900 rounded-full text-xs font-black uppercase tracking-wider">
+                    Inscription directe auprès d'un enseignant
+                  </span>
+                  <h2 className="font-extrabold text-amber-950 text-xl sm:text-2xl leading-snug">
+                    {session.directRegistrationNotice || (session.directRegistrationTeacherName 
+                      ? `Voir l'inscription directement avec ${session.directRegistrationTeacherName}`
+                      : "Voir l'inscription directement avec l'enseignant responsable.")}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-amber-800 max-w-md mx-auto leading-relaxed font-medium">
+                    Pour cet événement, les inscriptions ne sont pas ouvertes en ligne sur le site. Merci de vous adresser directement en personne à l'enseignant mentionné ci-dessus.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <button 
+                    onClick={handleGoBack}
+                    className="px-6 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs sm:text-sm hover:bg-slate-800 transition-colors cursor-pointer shadow-sm"
+                  >
+                    ← Retour au calendrier
+                  </button>
+                </div>
+              </div>
+            ) : isFull ? (
               <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-3">
                 <p className="font-black text-slate-800 text-base">La séance est complète</p>
                 <p className="text-xs text-slate-500">Toutes les places sont actuellement réservées.</p>
