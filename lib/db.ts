@@ -938,6 +938,10 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
   const localSes = localSessions.find(s => s.id === sessionId);
   let convId: string | undefined = localSes?.convocationId;
 
+  if (localSes?.blockOnlineRegistration) {
+    throw new Error(localSes.directRegistrationNotice || "L'inscription en ligne est bloquée pour cette séance.");
+  }
+
   if (localSes) {
     const currentEnrolled = Array.from(new Set([...(localSes.enrolledStudentIds || []), studentId]));
     saveLocalSession({ ...localSes, enrolledStudentIds: currentEnrolled });

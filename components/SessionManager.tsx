@@ -981,7 +981,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                           directRegistrationTeacherId: checked ? (prev.directRegistrationTeacherId || defaultTeacher?.id) : prev.directRegistrationTeacherId,
                           directRegistrationTeacherName: checked ? (prev.directRegistrationTeacherName || defaultTeacher?.name) : prev.directRegistrationTeacherName,
                           directRegistrationNotice: checked 
-                            ? (prev.directRegistrationNotice || (defaultTeacher?.name ? `Voir l'inscription directement avec ${defaultTeacher.name}` : "Voir l'inscription directement avec l'enseignant responsable."))
+                            ? (prev.directRegistrationNotice || (defaultTeacher?.name ? `voir l'inscription directement avec ${defaultTeacher.name}` : "voir l'inscription directement avec l'enseignant responsable"))
                             : prev.directRegistrationNotice
                         }));
                       }}
@@ -1007,35 +1007,45 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   <div className="pt-3 border-t border-amber-200/90 space-y-3 bg-white/70 p-3.5 rounded-lg">
                     <div>
                       <label className="block text-xs font-bold text-amber-950 mb-1.5">
-                        1. Cochez l'enseignant responsable de l'inscription directe :
+                        Cocher l'un des enseignants pour l'inscription directe :
                       </label>
                       {teachers.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                           {teachers.map(t => {
                             const isSelected = formData.directRegistrationTeacherId === t.id;
                             return (
-                              <button
+                              <label
                                 key={t.id}
-                                type="button"
-                                onClick={() => {
-                                  setFormData(prev => ({
-                                    ...prev,
-                                    directRegistrationTeacherId: t.id,
-                                    directRegistrationTeacherName: t.name,
-                                    directRegistrationNotice: `Voir l'inscription directement avec ${t.name}`
-                                  }));
-                                }}
-                                className={`flex items-center gap-2 p-2 rounded-lg border text-left text-xs font-semibold transition-all cursor-pointer ${
+                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left text-xs font-bold transition-all cursor-pointer select-none ${
                                   isSelected 
                                     ? 'bg-amber-600 text-white border-amber-700 shadow-xs' 
                                     : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50 hover:border-amber-400'
                                 }`}
                               >
-                                <span className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${isSelected ? 'border-white bg-white text-amber-700' : 'border-slate-400 bg-white'}`}>
-                                  {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>}
-                                </span>
+                                <input 
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    if (isSelected) {
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        directRegistrationTeacherId: undefined,
+                                        directRegistrationTeacherName: undefined,
+                                        directRegistrationNotice: "voir l'inscription directement avec l'enseignant responsable"
+                                      }));
+                                    } else {
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        directRegistrationTeacherId: t.id,
+                                        directRegistrationTeacherName: t.name,
+                                        directRegistrationNotice: `voir l'inscription directement avec ${t.name}`
+                                      }));
+                                    }
+                                  }}
+                                  className="w-4 h-4 text-amber-600 rounded border-gray-300 focus:ring-amber-500 shrink-0 cursor-pointer"
+                                />
                                 <span className="truncate">{t.name}</span>
-                              </button>
+                              </label>
                             );
                           })}
                         </div>
@@ -1047,16 +1057,16 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-xs font-bold text-amber-950">
-                          2. Mention affichée aux élèves et sur les plannings :
+                          Mention affichée aux élèves et parents :
                         </label>
-                        <span className="text-[10px] text-amber-700 font-medium">Texte modifiable</span>
+                        <span className="text-[10px] text-amber-700 font-medium">Texte personnalisable</span>
                       </div>
                       <input 
                         type="text"
                         className="w-full px-3 py-2 text-xs font-bold bg-white text-amber-950 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
                         value={formData.directRegistrationNotice || ''}
                         onChange={e => setFormData(prev => ({ ...prev, directRegistrationNotice: e.target.value }))}
-                        placeholder="Ex: Voir l'inscription directement avec M. Dupont"
+                        placeholder="Ex: voir l'inscription directement avec M. Dupont"
                       />
                     </div>
                   </div>
