@@ -328,6 +328,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
       birthDate?: string;
       licenseNumber: string;
       paid: string;
+      freeLicense?: boolean;
       parentalAuth: string;
       missingAuth: boolean;
       missingPaid: boolean;
@@ -341,7 +342,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
 
     const checkAndAdd = (student: Student, licenseNum: string, source: 'matched' | 'conflict' | 'manual' | 'already_in_db', sourceLabel: string) => {
       if (!student || !student.id || seenIds.has(student.id)) return;
-      const isPaid = String(student.paid || '').toUpperCase().trim() === 'OUI';
+      const isPaid = String(student.paid || '').toUpperCase().trim() === 'OUI' || !!student.freeLicense;
       const isAuth = String(student.parentalAuth || '').toUpperCase().trim() === 'OUI';
       const missingAuth = !isAuth;
       const missingPaid = !isPaid;
@@ -366,6 +367,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
           birthDate: student.birthDate,
           licenseNumber: licenseNum,
           paid: student.paid || 'NON',
+          freeLicense: !!student.freeLicense,
           parentalAuth: student.parentalAuth || 'NON',
           missingAuth,
           missingPaid,
@@ -429,7 +431,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
       formatDateFr(item.birthDate),
       item.licenseNumber,
       item.missingAuth ? 'NON FOURNIE (Manquante)' : 'VALIDÉE (OUI)',
-      item.missingPaid ? 'NON RÉGLÉ (Impayé)' : 'RÉGLÉ (OUI)',
+      item.freeLicense ? 'GRATUITE (Prise en charge AS)' : item.missingPaid ? 'NON RÉGLÉ (Impayé)' : 'RÉGLÉ (OUI)',
       item.label,
       item.sourceLabel
     ]);
@@ -460,7 +462,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
 
     list.forEach((item, idx) => {
       const apStatus = item.missingAuth ? 'AP: ❌ NON FOURNIE' : 'AP: ✓ VALIDÉE';
-      const payStatus = item.missingPaid ? 'Cotisation: ❌ IMPAYÉE' : 'Cotisation: ✓ RÉGLÉE';
+      const payStatus = item.freeLicense ? 'Cotisation: ✓ GRATUITE (Prise en charge AS)' : item.missingPaid ? 'Cotisation: ❌ IMPAYÉE' : 'Cotisation: ✓ RÉGLÉE';
       text += `${idx + 1}. ${item.lastName.toUpperCase()} ${item.firstName} (${item.classGroup || 'Sans classe'})\n`;
       text += `   N° Licence UNSS : ${item.licenseNumber}\n`;
       text += `   Statut : ${apStatus} | ${payStatus}\n\n`;
@@ -537,7 +539,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
                   <td>${formatDateFr(item.birthDate)}</td>
                   <td><code>${item.licenseNumber}</code></td>
                   <td>${item.missingAuth ? '<span class="badge-warn">❌ NON FOURNIE</span>' : '<span class="badge-ok">✓ Validée</span>'}</td>
-                  <td>${item.missingPaid ? '<span class="badge-warn">❌ IMPAYÉ</span>' : '<span class="badge-ok">✓ Réglé</span>'}</td>
+                  <td>${item.freeLicense ? '<span class="badge-ok">✓ GRATUITE (AS)</span>' : item.missingPaid ? '<span class="badge-warn">❌ IMPAYÉ</span>' : '<span class="badge-ok">✓ Réglé</span>'}</td>
                   <td><span class="badge-warn">${item.label}</span></td>
                 </tr>
               `).join('')}
@@ -1199,7 +1201,11 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
                                 )}
                               </td>
                               <td className="px-4 py-3">
-                                {item.missingPaid ? (
+                                {item.freeLicense ? (
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                    ✨ Gratuit (AS)
+                                  </span>
+                                ) : item.missingPaid ? (
                                   <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
                                     ❌ Non réglé
                                   </span>

@@ -66,7 +66,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
       if (selectedClass !== 'ALL' && cls !== selectedClass) return;
 
       // Filtre d'état
-      const isPaid = String(s.paid || '').toUpperCase() === 'OUI';
+      const isPaid = String(s.paid || '').toUpperCase() === 'OUI' || !!s.freeLicense;
       const isAuth = String(s.parentalAuth || '').toUpperCase() === 'OUI';
       const hasLic = !!(s.licenseNumber && s.licenseNumber.trim().length > 0);
       const isComplete = isPaid && isAuth && hasLic;
@@ -199,7 +199,8 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
         }
 
         const totalCount = classStudents.length;
-        const paidCount = classStudents.filter(s => String(s.paid || '').toUpperCase() === 'OUI').length;
+        const freeCount = classStudents.filter(s => !!s.freeLicense).length;
+        const paidCount = classStudents.filter(s => String(s.paid || '').toUpperCase() === 'OUI' || !!s.freeLicense).length;
         const licCount = classStudents.filter(s => !!(s.licenseNumber && s.licenseNumber.trim().length > 0)).length;
 
         const actualBlankRows = getBlankRowsForClass(totalCount);
@@ -254,7 +255,8 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
         doc.setFillColor(241, 245, 249);
         doc.setDrawColor(203, 213, 225);
         doc.roundedRect(pageWidth - 88, 5.5, 82, 8, 1.5, 1.5, 'FD');
-        doc.text(`Édité le ${todayFormatted}  •  Cotis: ${paidCount}/${totalCount}  •  Lic: ${licCount}/${totalCount}`, pageWidth - 47, 10.5, { align: 'center' });
+        const cotisSummary = freeCount > 0 ? `Cotis: ${paidCount}/${totalCount} (${freeCount} grat.)` : `Cotis: ${paidCount}/${totalCount}`;
+        doc.text(`Édité le ${todayFormatted}  •  ${cotisSummary}  •  Lic: ${licCount}/${totalCount}`, pageWidth - 47, 10.5, { align: 'center' });
 
         doc.setFont('helvetica', 'italic');
         doc.setFontSize(6.5);
@@ -283,7 +285,8 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
 
         // 1) Élèves inscrits
         classStudents.forEach((st, idx) => {
-          const isPaid = String(st.paid || '').toUpperCase() === 'OUI';
+          const isFree = !!st.freeLicense;
+          const isPaid = String(st.paid || '').toUpperCase() === 'OUI' || isFree;
           const isAuth = String(st.parentalAuth || '').toUpperCase() === 'OUI';
           const isSwim = String(st.swimmingCertificate || '').toUpperCase() === 'OUI';
           const isImg = String(st.imageRights || '').toUpperCase() === 'OUI';
@@ -301,14 +304,16 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
           }
 
           row.push(hasLic ? st.licenseNumber : (highlightMissing ? '...........' : '-'));
-          row.push(isPaid ? 'OUI' : (highlightMissing ? 'NON' : 'NON'));
+          row.push(isFree ? 'GRATUIT' : isPaid ? 'OUI' : (highlightMissing ? 'NON' : 'NON'));
 
           if (showPaymentDetails) {
-            row.push(st.amount ? `${st.amount} €` : (highlightMissing ? '... €' : '-'));
+            row.push(isFree ? '0 €' : st.amount ? `${st.amount} €` : (highlightMissing ? '... €' : '-'));
             row.push(
-              st.paymentMethod 
-                ? `${st.paymentMethod}${st.checkNumber ? ' (' + st.checkNumber + ')' : ''}` 
-                : (highlightMissing ? 'Esp/Chq' : '-')
+              isFree 
+                ? 'Licence gratuite'
+                : st.paymentMethod 
+                  ? `${st.paymentMethod}${st.checkNumber ? ' (' + st.checkNumber + ')' : ''}` 
+                  : (highlightMissing ? 'Esp/Chq' : '-')
             );
           }
 
@@ -733,7 +738,8 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
           ) : (
             groupedStudents.map(([className, classStudents], groupIdx) => {
               const totalCount = classStudents.length;
-              const paidCount = classStudents.filter(s => String(s.paid || '').toUpperCase() === 'OUI').length;
+              const freeCount = classStudents.filter(s => !!s.freeLicense).length;
+              const paidCount = classStudents.filter(s => String(s.paid || '').toUpperCase() === 'OUI' || !!s.freeLicense).length;
               const authCount = classStudents.filter(s => String(s.parentalAuth || '').toUpperCase() === 'OUI').length;
               const licCount = classStudents.filter(s => !!(s.licenseNumber && s.licenseNumber.trim().length > 0)).length;
 
@@ -783,7 +789,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
                         <div className="inline-flex items-center gap-1.5 font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-300 text-[10px]">
                           <span>Édité le {todayFormatted}</span>
                           <span>•</span>
-                          <span>Cotis. : {paidCount}/{totalCount}</span>
+                          <span>Cotis. : {paidCount}/{totalCount} {freeCount > 0 ? `(${freeCount} grat.)` : ''}</span>
                           <span>•</span>
                           <span>Licences : {licCount}/{totalCount}</span>
                         </div>
@@ -826,7 +832,8 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
                         </thead>
                         <tbody>
                           {classStudents.map((st, idx) => {
-                            const isPaid = String(st.paid || '').toUpperCase() === 'OUI';
+                            const isFree = !!st.freeLicense;
+                            const isPaid = String(st.paid || '').toUpperCase() === 'OUI' || isFree;
                             const isAuth = String(st.parentalAuth || '').toUpperCase() === 'OUI';
                             const isSwim = String(st.swimmingCertificate || '').toUpperCase() === 'OUI';
                             const isImg = String(st.imageRights || '').toUpperCase() === 'OUI';
@@ -882,7 +889,11 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
 
                                 {/* Cotisation */}
                                 <td className={`border border-slate-300 ${density.padding} text-center`}>
-                                  {isPaid ? (
+                                  {isFree ? (
+                                    <span className={`inline-block ${density.badgePadding} rounded font-black ${density.text} bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs`} title="Licence gratuite accordée (Prise en charge AS)">
+                                      GRATUIT
+                                    </span>
+                                  ) : isPaid ? (
                                     <span className={`inline-block ${density.badgePadding} rounded font-black ${density.text} bg-emerald-100 text-emerald-900 border border-emerald-300`}>
                                       OUI
                                     </span>
@@ -899,14 +910,20 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
                                 {showPaymentDetails && (
                                   <>
                                     <td className={`border border-slate-300 ${density.padding} text-center text-slate-700 font-semibold ${density.text}`}>
-                                      {st.amount ? (
+                                      {isFree ? (
+                                        <span className="text-amber-800 font-bold">0€</span>
+                                      ) : st.amount ? (
                                         `${st.amount}€`
                                       ) : highlightMissing ? (
                                         <span className="text-slate-400 text-[8px]">..€</span>
                                       ) : '-'}
                                     </td>
                                     <td className={`border border-slate-300 ${density.padding} text-center ${density.subtext} text-slate-700 truncate`}>
-                                      {st.paymentMethod ? (
+                                      {isFree ? (
+                                        <span className="text-amber-800 font-bold bg-amber-50 px-1 py-0.5 rounded border border-amber-200 text-[10px]">
+                                          Licence gratuite
+                                        </span>
+                                      ) : st.paymentMethod ? (
                                         <span>
                                           {st.paymentMethod} {st.checkNumber ? `(${st.checkNumber})` : ''}
                                         </span>

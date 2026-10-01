@@ -424,12 +424,12 @@ export default function App() {
     let ids: string[] = [];
     if (filterType === 'valid') {
        ids = filteredStudents
-         .filter(s => s.licenseNumber && String(s.paid).toUpperCase() === 'OUI' && String(s.parentalAuth).toUpperCase() === 'OUI')
+         .filter(s => s.licenseNumber && (String(s.paid).toUpperCase() === 'OUI' || s.freeLicense) && String(s.parentalAuth).toUpperCase() === 'OUI')
          .map(s => s.id);
     } else {
        ids = filteredStudents
          .filter(s => {
-            const isPaid = String(s.paid).toUpperCase() === 'OUI';
+            const isPaid = String(s.paid).toUpperCase() === 'OUI' || !!s.freeLicense;
             const isAuth = String(s.parentalAuth).toUpperCase() === 'OUI';
             const isValid = !!s.licenseNumber && isPaid && isAuth;
             return (isPaid || isAuth) && !isValid;
@@ -453,7 +453,12 @@ export default function App() {
 
     if (exportType === 'csv') {
       const headers = activeColumns.map(c => c.label);
-      const rows = dataToProcess.map(s => activeColumns.map(c => s[c.key as string] || ''));
+      const rows = dataToProcess.map(s => activeColumns.map(c => {
+        if (c.key === 'paid') return s.freeLicense ? 'GRATUIT' : (s.paid || '');
+        if (c.key === 'paymentMethod' && s.freeLicense) return 'Licence gratuite';
+        if (c.key === 'amount' && s.freeLicense) return '0';
+        return s[c.key as string] || '';
+      }));
       const csvContent = "\uFEFF" + [
         headers.join(';'),
         ...rows.map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(';'))
@@ -488,7 +493,11 @@ export default function App() {
         dataToProcess.forEach(s => {
           printWindow.document.write('<tr>');
           activeColumns.forEach(c => {
-            printWindow.document.write(`<td>${s[c.key as string] || ''}</td>`);
+            let val = s[c.key as string] || '';
+            if (c.key === 'paid' && s.freeLicense) val = 'GRATUIT';
+            if (c.key === 'paymentMethod' && s.freeLicense) val = 'Licence gratuite';
+            if (c.key === 'amount' && s.freeLicense) val = '0 €';
+            printWindow.document.write(`<td>${val}</td>`);
           });
           printWindow.document.write('</tr>');
         });
@@ -710,7 +719,7 @@ export default function App() {
               />
               <StatCard 
                 title="Cotisations Validées" 
-                value={students.filter(s => s.schoolYear === activeYear && String(s.paid).toUpperCase() === 'OUI').length} 
+                value={students.filter(s => s.schoolYear === activeYear && (String(s.paid).toUpperCase() === 'OUI' || s.freeLicense)).length} 
                 icon={<CheckCircle className="w-6 h-6 text-emerald-600" />}
                 colorClass="bg-white text-emerald-600 border-slate-200"
               />
@@ -1085,9 +1094,68 @@ export default function App() {
                   <input type="text" value={newMember.birthDate || ''} onChange={e => setNewMember({...newMember, birthDate: e.target.value})} className="w-full px-3 py-2 border rounded-lg" placeholder="JJ/MM/AAAA" />
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1">N° Chèque (si paiement)</label>
-                  <input type="text" value={newMember.checkNumber || ''} onChange={e => setNewMember({...newMember, checkNumber: e.target.value})} className="w-full px-3 py-2 border rounded-lg" placeholder="Ex: 1234567" />
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">N° Licence UNSS</label>
+                  <input type="text" value={newMember.licenseNumber || ''} onChange={e => setNewMember({...newMember, licenseNumber: e.target.value})} className="w-full px-3 py-2 border rounded-lg" placeholder="Ex: 06123456" />
                 </div>
+              </div>
+
+              {/* Encadré Paiement / Cotisation */}
+              <div className={`p-3.5 rounded-xl border-2 transition-all ${newMember.freeLicense ? 'bg-amber-50/70 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+                <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    💳 Paiement / Cotisation
+                  </span>
+                  <label className="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-md border border-amber-300 hover:border-amber-400 cursor-pointer shadow-2xs select-none">
+                    <input 
+                      type="checkbox"
+                      id="newMemberFreeLicense"
+                      checked={!!newMember.freeLicense}
+                      onChange={e => {
+                        const isFree = e.target.checked;
+                        setNewMember({
+                          ...newMember,
+                          freeLicense: isFree,
+                          paid: isFree ? 'OUI' : 'NON',
+                          amount: isFree ? '0' : '20',
+                          paymentMethod: isFree ? 'Gratuit' : ''
+                        });
+                      }}
+                      className="w-3.5 h-3.5 text-amber-600 rounded border-amber-300 focus:ring-amber-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-slate-800">Licence gratuite</span>
+                  </label>
+                </div>
+
+                {newMember.freeLicense ? (
+                  <div className="text-xs text-amber-900 bg-amber-100/60 p-2 rounded border border-amber-200 flex items-center justify-between">
+                    <span>✨ Dispensé de paiement (prise en charge AS). Mentionné sur le récapitulatif.</span>
+                    <span className="font-bold shrink-0 bg-white/80 px-2 py-0.5 rounded text-[11px]">0 €</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Payé (€)</label>
+                      <select 
+                        value={newMember.paid || 'NON'}
+                        onChange={e => setNewMember({...newMember, paid: e.target.value})}
+                        className="w-full px-2.5 py-1.5 border rounded-lg bg-white text-xs font-semibold"
+                      >
+                        <option value="OUI">OUI</option>
+                        <option value="NON">NON</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Montant (€)</label>
+                      <input 
+                        type="text" 
+                        value={newMember.amount || ''} 
+                        onChange={e => setNewMember({...newMember, amount: e.target.value})} 
+                        className="w-full px-2.5 py-1.5 border rounded-lg bg-white text-xs" 
+                        placeholder="Ex: 20" 
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <button onClick={() => setIsAddMemberModalOpen(false)} className="px-4 py-2 bg-slate-100 text-slate-700 font-medium rounded-lg hover:bg-slate-200">Annuler</button>

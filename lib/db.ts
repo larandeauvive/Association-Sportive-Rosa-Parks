@@ -269,10 +269,11 @@ export const getPublicDirectory = async (schoolYear: string): Promise<PublicStud
             schoolYear: s.schoolYear,
             licenseNumber: s.licenseNumber,
             paid: s.paid,
+            freeLicense: !!s.freeLicense,
             parentalAuth: s.parentalAuth,
             swimmingCertificate: s.swimmingCertificate,
             imageRights: s.imageRights,
-            hasLicense: !!(s.licenseNumber && s.licenseNumber.trim().length > 0) || s.opussChecked === true || s.paid === 'OUI'
+            hasLicense: !!(s.licenseNumber && s.licenseNumber.trim().length > 0) || s.opussChecked === true || s.paid === 'OUI' || !!s.freeLicense
           });
         }
       });
@@ -291,11 +292,12 @@ export const getPublicDirectory = async (schoolYear: string): Promise<PublicStud
     classGroup: s.classGroup || '',
     schoolYear: s.schoolYear || '',
     paid: s.paid || 'NON',
+    freeLicense: !!s.freeLicense,
     parentalAuth: s.parentalAuth || 'NON',
     swimmingCertificate: s.swimmingCertificate || 'NON',
     imageRights: s.imageRights || 'NON',
     licenseNumber: s.licenseNumber || '',
-    hasLicense: !!(s.licenseNumber && s.licenseNumber.trim().length > 0) || s.opussChecked === true || s.paid === 'OUI'
+    hasLicense: !!(s.licenseNumber && s.licenseNumber.trim().length > 0) || s.opussChecked === true || s.paid === 'OUI' || !!s.freeLicense
   }));
 };
 

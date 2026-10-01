@@ -21,6 +21,7 @@ export const students = pgTable('students', {
   birthDate: text('birth_date'),
   opussChecked: boolean('opuss_checked').default(false),
   isAdult: boolean('is_adult').default(false),
+  freeLicense: boolean('free_license').default(false),
   createdAt: text('created_at'),
   updatedAt: text('updated_at')
 });

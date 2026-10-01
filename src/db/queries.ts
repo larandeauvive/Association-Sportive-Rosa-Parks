@@ -26,6 +26,7 @@ export async function getAllStudents(schoolYear?: string): Promise<Student[]> {
       birthDate: r.birthDate ?? undefined,
       opussChecked: r.opussChecked ?? false,
       isAdult: r.isAdult ?? false,
+      freeLicense: r.freeLicense ?? false,
       paid: r.paid ?? 'NON',
       amount: r.amount ?? '',
       paymentMethod: r.paymentMethod ?? '',
@@ -51,6 +52,7 @@ export async function getPublicStudentsDirectory(schoolYear: string): Promise<Pu
       classGroup: students.classGroup,
       schoolYear: students.schoolYear,
       paid: students.paid,
+      freeLicense: students.freeLicense,
       parentalAuth: students.parentalAuth,
       swimmingCertificate: students.swimmingCertificate,
       imageRights: students.imageRights,
@@ -67,6 +69,7 @@ export async function getPublicStudentsDirectory(schoolYear: string): Promise<Pu
       classGroup: r.classGroup ?? '',
       schoolYear: r.schoolYear,
       paid: r.paid ?? 'NON',
+      freeLicense: r.freeLicense ?? false,
       parentalAuth: r.parentalAuth ?? 'NON',
       swimmingCertificate: r.swimmingCertificate ?? 'NON',
       imageRights: r.imageRights ?? 'NON',
@@ -102,6 +105,7 @@ export async function insertStudent(student: Omit<Student, 'id'> & { id?: string
       birthDate: student.birthDate || null,
       opussChecked: !!student.opussChecked,
       isAdult: !!student.isAdult,
+      freeLicense: !!student.freeLicense,
       createdAt: now,
       updatedAt: now
     } as any);
@@ -131,7 +135,8 @@ export async function getStudentById(id: string): Promise<Student | null> {
       birthDate: r.birthDate ?? undefined,
       size: r.size ?? undefined,
       opussChecked: !!r.opussChecked,
-      isAdult: !!r.isAdult
+      isAdult: !!r.isAdult,
+      freeLicense: !!r.freeLicense
     } as Student;
   } catch (error) {
     console.error("Failed to query student by id:", error);
@@ -162,6 +167,7 @@ export async function updateStudentById(id: string, data: Partial<Student>): Pro
     if (data.birthDate !== undefined) updatePayload.birthDate = data.birthDate;
     if (data.opussChecked !== undefined) updatePayload.opussChecked = !!data.opussChecked;
     if (data.isAdult !== undefined) updatePayload.isAdult = !!data.isAdult;
+    if (data.freeLicense !== undefined) updatePayload.freeLicense = !!data.freeLicense;
 
     await db.update(students).set(updatePayload).where(eq(students.id, id));
   } catch (error) {
@@ -241,6 +247,7 @@ export async function batchUpsertStudents(list: Array<Partial<Student> & { lastN
         birthDate: item.birthDate || null,
         opussChecked: !!item.opussChecked,
         isAdult: !!item.isAdult,
+        freeLicense: !!item.freeLicense,
         createdAt: now,
         updatedAt: now
       }).onConflictDoUpdate({
@@ -249,6 +256,7 @@ export async function batchUpsertStudents(list: Array<Partial<Student> & { lastN
           classGroup: (item.classGroup || '').toUpperCase().trim(),
           licenseNumber: item.licenseNumber || '',
           paid: item.paid || 'NON',
+          freeLicense: item.freeLicense !== undefined ? !!item.freeLicense : false,
           amount: item.amount || '',
           paymentMethod: item.paymentMethod || '',
           checkNumber: item.checkNumber || null,

@@ -92,7 +92,8 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const getStudentMissingRequirements = (student: PublicStudent): string[] => {
     if (!session) return [];
     const missing: string[] = [];
-    if (session.requirePaid && String(student.paid).toUpperCase() !== 'OUI') {
+    const isPaid = String(student.paid).toUpperCase() === 'OUI' || !!student.freeLicense;
+    if (session.requirePaid && !isPaid) {
       missing.push("Cotisation à jour");
     }
     if (session.requireLicense) {
@@ -724,7 +725,11 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                     </span>
                                   )}
                                   {session.requirePaid && (
-                                    String(student.paid).toUpperCase() === 'OUI' ? (
+                                    student.freeLicense ? (
+                                      <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+                                        Gratuit (AS) ✓
+                                      </span>
+                                    ) : String(student.paid).toUpperCase() === 'OUI' ? (
                                       <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
                                         Cotisation ✓
                                       </span>

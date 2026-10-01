@@ -78,6 +78,7 @@ export function saveLocalStudent(student: Partial<Student>): Student {
     birthDate: student.birthDate,
     opussChecked: student.opussChecked || false,
     isAdult: student.isAdult || false,
+    freeLicense: student.freeLicense !== undefined ? !!student.freeLicense : (existingIdx >= 0 ? !!all[existingIdx].freeLicense : false),
     createdAt: (existingIdx >= 0 ? all[existingIdx].createdAt : undefined) || student.createdAt || now,
     updatedAt: now
   };
@@ -124,6 +125,7 @@ export function batchSaveLocalStudents(newStudents: Partial<Student>[], schoolYe
       birthDate: s.birthDate || (existingIdx >= 0 ? all[existingIdx].birthDate : undefined),
       opussChecked: s.opussChecked !== undefined ? s.opussChecked : (existingIdx >= 0 ? all[existingIdx].opussChecked : false),
       isAdult: s.isAdult !== undefined ? s.isAdult : (existingIdx >= 0 ? all[existingIdx].isAdult : false),
+      freeLicense: s.freeLicense !== undefined ? !!s.freeLicense : (existingIdx >= 0 ? !!all[existingIdx].freeLicense : false),
       createdAt: (existingIdx >= 0 ? all[existingIdx].createdAt : undefined) || now,
       updatedAt: now
     };

@@ -70,13 +70,38 @@ export const StudentTable: React.FC<StudentTableProps> = ({
                     {columns.filter(c => c.visible).map(col => (
                       <td key={`${student.id}-${col.key as string}`} className="p-4 whitespace-nowrap">
                         {col.key === 'paid' ? (
-                           <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-                             String(student.paid).toUpperCase() === 'OUI' 
-                             ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
-                             : 'bg-rose-100 text-rose-700 border border-rose-200'
-                           }`}>
-                             {student[col.key as string]}
-                           </span>
+                           student.freeLicense ? (
+                             <span 
+                               title="Licence gratuite accordée (Prise en charge AS — Dispensé de paiement)"
+                               className="inline-flex items-center px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300 shadow-2xs"
+                             >
+                               GRATUIT
+                             </span>
+                           ) : (
+                             <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
+                               String(student.paid).toUpperCase() === 'OUI' 
+                               ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' 
+                               : 'bg-rose-100 text-rose-700 border border-rose-200'
+                             }`}>
+                               {student[col.key as string]}
+                             </span>
+                           )
+                        ) : col.key === 'paymentMethod' ? (
+                          student.freeLicense ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              Licence gratuite
+                            </span>
+                          ) : (
+                            <span>{student[col.key as string] || '-'}</span>
+                          )
+                        ) : col.key === 'amount' ? (
+                          student.freeLicense ? (
+                            <span className="text-amber-800 font-semibold text-xs">
+                              0 € (Gratuit)
+                            </span>
+                          ) : (
+                            <span>{student[col.key as string] ? `${student[col.key as string]} €` : '-'}</span>
+                          )
                         ) : col.key === 'classGroup' ? (
                           <span className="font-medium text-slate-900 bg-slate-100 px-2 py-1 rounded-md border border-slate-200">
                              {student[col.key as string]}

@@ -18,6 +18,7 @@ export interface Student {
   birthDate?: string; // Date de naissance
   opussChecked?: boolean; // Case à cocher pour suivi OPUSS
   isAdult?: boolean; // Si c'est un adulte
+  freeLicense?: boolean; // Licence gratuite (dispensé de paiement, prise en charge AS)
   [key: string]: string | boolean | undefined; // Index signature for dynamic access
 }
 
@@ -33,6 +34,7 @@ export interface PublicStudent {
   classGroup?: string;
   schoolYear?: string;
   paid?: string; // OUI/NON pour affichage statut €
+  freeLicense?: boolean; // Si licence gratuite
   parentalAuth?: string; // OUI/NON pour affichage statut AP
   swimmingCertificate?: string; // OUI/NON pour statut savoir nager
   imageRights?: string; // OUI/NON pour droit à l'image

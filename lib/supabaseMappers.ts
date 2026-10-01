@@ -26,6 +26,7 @@ export function rowToStudent(row: any): Student {
     birthDate: row.birth_date ?? row.birthDate,
     opussChecked: row.opuss_checked ?? row.opussChecked ?? false,
     isAdult: row.is_adult ?? row.isAdult ?? false,
+    freeLicense: row.free_license ?? row.freeLicense ?? false,
     createdAt: row.created_at ?? row.createdAt,
     updatedAt: row.updated_at ?? row.updatedAt
   };
@@ -52,6 +53,7 @@ export function studentToRow(student: Partial<Student>): any {
   if (student.birthDate !== undefined) row.birth_date = student.birthDate;
   if (student.opussChecked !== undefined) row.opuss_checked = student.opussChecked;
   if (student.isAdult !== undefined) row.is_adult = student.isAdult;
+  if (student.freeLicense !== undefined) row.free_license = student.freeLicense;
   if (student.createdAt !== undefined) row.created_at = student.createdAt;
   if (student.updatedAt !== undefined) row.updated_at = student.updatedAt;
   return row;

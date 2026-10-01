@@ -65,7 +65,8 @@ export const Dashboard: React.FC<Props> = ({ students, activeYear, onNewConvocat
   // Statistiques Générales
   const totalStudents = yearStudents.length;
   const licensedStudents = licensedStudentsList.length;
-  const paidStudents = yearStudents.filter(s => s.paid === 'OUI').length;
+  const paidStudents = yearStudents.filter(s => s.paid === 'OUI' || s.freeLicense).length;
+  const freeLicenseStudents = yearStudents.filter(s => !!s.freeLicense).length;
   
   // Taux de pénétration (% d'élèves du lycée licenciés à l'AS)
   const penetrationRate = schoolTotal > 0 ? ((licensedStudents / schoolTotal) * 100).toFixed(1) : '0';
@@ -108,7 +109,9 @@ export const Dashboard: React.FC<Props> = ({ students, activeYear, onNewConvocat
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Inscrits AS</p>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-black text-slate-900">{totalStudents}</span>
-              <span className="text-xs font-semibold text-emerald-600">({paidStudents} cotisations)</span>
+              <span className="text-xs font-semibold text-emerald-600">
+                ({paidStudents} cotisations{freeLicenseStudents > 0 ? ` dont ${freeLicenseStudents} gratuite${freeLicenseStudents > 1 ? 's' : ''}` : ''})
+              </span>
             </div>
           </div>
         </div>
