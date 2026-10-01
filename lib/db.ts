@@ -4,6 +4,9 @@ import {
   collection, doc, getDocs, getDoc, setDoc, deleteDoc, writeBatch 
 } from 'firebase/firestore';
 import { 
+  storeSessionPdfInLocalDb, getSessionPdfFromLocalDb, deleteSessionPdfFromLocalDb 
+} from './pdfStorage';
+import { 
   Student, PublicStudent, Teacher, Convocation, 
   Session, EveningSlot, StaffMember, StaffAttendanceRecord 
 } from '../types';
@@ -713,7 +716,15 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
   for (const s of localList || []) {
     if (s && s.id) {
       const existing = map.get(s.id);
-      map.set(s.id, existing ? { ...existing, ...s } : s);
+      if (existing) {
+        // Préserver le PDF joint complet si présent dans l'un des deux
+        const pdf = (existing.attachedPdf?.fileData ? existing.attachedPdf : null) ||
+                    (s.attachedPdf?.fileData ? s.attachedPdf : null) ||
+                    existing.attachedPdf || s.attachedPdf;
+        map.set(s.id, { ...existing, ...s, attachedPdf: pdf });
+      } else {
+        map.set(s.id, s);
+      }
     }
   }
   const result = Array.from(map.values());
@@ -818,11 +829,25 @@ export const addSessionApi = async (data: Omit<Session, 'id'>): Promise<string> 
   const sessionWithId = { ...data, id: newId };
   saveLocalSession(sessionWithId);
 
+  // Sauvegarde dans IndexedDB local (sans limite de quota 5 Mo)
+  if (sessionWithId.attachedPdf) {
+    storeSessionPdfInLocalDb(newId, sessionWithId.attachedPdf).catch(() => {});
+  }
+
   const row = sessionToRow(sessionWithId);
 
   // Firestore Cloud (écrit instantanément dans le cloud global)
   try {
-    await setDoc(doc(firestoreDb, 'sessions', newId), row, { merge: true });
+    const fsRow = { ...row };
+    if (fsRow.attached_pdf && typeof fsRow.attached_pdf.fileData === 'string' && fsRow.attached_pdf.fileData.length > 700000) {
+      fsRow.attached_pdf = {
+        fileName: fsRow.attached_pdf.fileName,
+        fileSize: fsRow.attached_pdf.fileSize,
+        uploadedAt: fsRow.attached_pdf.uploadedAt,
+        title: fsRow.attached_pdf.title
+      };
+    }
+    await setDoc(doc(firestoreDb, 'sessions', newId), fsRow, { merge: true });
   } catch (fsErr) {
     console.warn('Firestore addSession error:', fsErr);
   }
@@ -855,11 +880,27 @@ export const addSessionApi = async (data: Omit<Session, 'id'>): Promise<string> 
 export const updateSessionApi = async (id: string, data: Partial<Session>): Promise<void> => {
   saveLocalSession({ ...data, id });
 
+  // Sauvegarde locale IndexedDB
+  if (data.attachedPdf) {
+    storeSessionPdfInLocalDb(id, data.attachedPdf).catch(() => {});
+  } else if (data.attachedPdf === null) {
+    deleteSessionPdfFromLocalDb(id).catch(() => {});
+  }
+
   const row = sessionToRow(data);
 
-  // Firestore Cloud
+  // Firestore Cloud : éviter le rejet si le document dépasse 1Mo
   try {
-    await setDoc(doc(firestoreDb, 'sessions', id), row, { merge: true });
+    const fsRow = { ...row };
+    if (fsRow.attached_pdf && typeof fsRow.attached_pdf.fileData === 'string' && fsRow.attached_pdf.fileData.length > 700000) {
+      fsRow.attached_pdf = {
+        fileName: fsRow.attached_pdf.fileName,
+        fileSize: fsRow.attached_pdf.fileSize,
+        uploadedAt: fsRow.attached_pdf.uploadedAt,
+        title: fsRow.attached_pdf.title
+      };
+    }
+    await setDoc(doc(firestoreDb, 'sessions', id), fsRow, { merge: true });
   } catch (fsErr) {
     console.warn('Firestore updateSession error:', fsErr);
   }
@@ -880,8 +921,8 @@ export const updateSessionApi = async (id: string, data: Partial<Session>): Prom
         method: 'PUT',
         body: JSON.stringify(data)
       });
-    } catch {
-      // ok
+    } catch (sErr) {
+      console.warn('Erreur mise à jour serveur local session:', sErr);
     }
   }
 };
@@ -899,12 +940,16 @@ export const saveSessionApi = async (data: Partial<Session> & { id?: string }): 
   } catch (err) {
     const fallbackId = data.id || generateSafeId('ses');
     saveLocalSession({ ...data, id: fallbackId });
+    if (data.attachedPdf) {
+      storeSessionPdfInLocalDb(fallbackId, data.attachedPdf).catch(() => {});
+    }
     return { id: fallbackId };
   }
 };
 
 export const deleteSessionApi = async (id: string): Promise<void> => {
   deleteLocalSession(id);
+  deleteSessionPdfFromLocalDb(id).catch(() => {});
 
   // Firestore Cloud
   try {

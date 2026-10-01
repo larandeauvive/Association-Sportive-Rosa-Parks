@@ -402,7 +402,8 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           blockOnlineRegistration: newEventBlockOnlineRegistration,
           directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || null) : null,
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || null) : null,
-          directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null
+          directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null,
+          attachedPdf: (events.find(ev => ev.id === editingEventId)?.raw as Session)?.attachedPdf || null
         };
         await saveSessionApi({ ...updateData, id: editingEventId });
         
@@ -1303,6 +1304,41 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     <p className="text-slate-600 font-medium text-sm mt-3 bg-slate-50 p-4 rounded-xl border border-slate-200/80 shadow-sm inline-block">
                       {(selectedEvent.raw as Session).description}
                     </p>
+                  )}
+
+                  {selectedEvent.type === 'session' && (selectedEvent.raw as Session).attachedPdf && (
+                    <div className="mt-3 p-3.5 bg-indigo-50/90 border border-indigo-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-black text-xs shrink-0 border border-red-200">
+                          PDF
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wide block">
+                            Document joint / Recueil d'informations
+                          </span>
+                          <p className="text-xs font-bold text-slate-900 truncate">
+                            {(selectedEvent.raw as Session).attachedPdf!.fileName}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const doc = (selectedEvent.raw as Session).attachedPdf!;
+                          const link = document.createElement('a');
+                          link.href = doc.fileData;
+                          link.download = doc.fileName || 'recueil_informations.pdf';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs shrink-0 cursor-pointer"
+                        title="Télécharger le document d'information"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Télécharger</span>
+                      </button>
+                    </div>
                   )}
                   
                   {selectedEvent.type === 'convocation' && (selectedEvent.raw as Convocation).needSnack === 'OUI' && (

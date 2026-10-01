@@ -196,7 +196,21 @@ export function getLocalSessions(schoolYear?: string): Session[] {
 }
 
 export function setLocalSessions(sessions: Session[]): void {
-  safeSet(STORAGE_KEYS.SESSIONS, sessions);
+  // Pour éviter le dépassement de quota (5 Mo) dans localStorage,
+  // les gros fichiers PDF sont allégés dans localStorage (le fichier complet est stocké dans IndexedDB et CloudSQL)
+  const sanitized = sessions.map(s => {
+    if (s.attachedPdf?.fileData && s.attachedPdf.fileData.length > 150000) {
+      return {
+        ...s,
+        attachedPdf: {
+          ...s.attachedPdf,
+          fileData: ''
+        }
+      };
+    }
+    return s;
+  });
+  safeSet(STORAGE_KEYS.SESSIONS, sanitized);
 }
 
 export function saveLocalSession(session: Partial<Session>): Session {

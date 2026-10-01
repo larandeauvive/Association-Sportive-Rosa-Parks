@@ -391,6 +391,29 @@ async function startServer() {
     }
   });
 
+  // Streaming/téléchargement direct du PDF associé à une séance
+  app.get('/api/sessions/:id/pdf', async (req, res) => {
+    try {
+      const session = await getSessionById(req.params.id);
+      if (!session || !session.attachedPdf) {
+        return res.status(404).json({ error: 'Aucun document PDF associé à cette séance.' });
+      }
+      const pdf = session.attachedPdf;
+      if (pdf.fileData && pdf.fileData.startsWith('data:')) {
+        const matches = pdf.fileData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches && matches.length === 3) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(pdf.fileName || 'seance.pdf')}"`);
+          return res.send(buffer);
+        }
+      }
+      res.json(pdf);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Public/self-enrollment endpoint
   app.post('/api/sessions/:id/enroll', async (req, res) => {
     try {

@@ -60,7 +60,16 @@ export const sessions = pgTable('sessions', {
   registrationCloseDate: text('registration_close_date'),
   isTeamRegistration: boolean('is_team_registration').default(false),
   teamSize: integer('team_size'),
-  teams: jsonb('teams')
+  teams: jsonb('teams'),
+  registrationDaysBefore: integer('registration_days_before'),
+  registrationCloseTime: text('registration_close_time'),
+  registrationOpenDaysBefore: integer('registration_open_days_before'),
+  recurrenceGroupId: text('recurrence_group_id'),
+  blockOnlineRegistration: boolean('block_online_registration').default(false),
+  directRegistrationTeacherId: text('direct_registration_teacher_id'),
+  directRegistrationTeacherName: text('direct_registration_teacher_name'),
+  directRegistrationNotice: text('direct_registration_notice'),
+  attachedPdf: jsonb('attached_pdf')
 });
 
 // Convocations compétitions (convocations)

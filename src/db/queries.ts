@@ -341,9 +341,18 @@ export async function getSessions(schoolYear?: string): Promise<Session[]> {
       returnTime: r.returnTime ?? undefined,
       registrationOpenDate: r.registrationOpenDate ?? undefined,
       registrationCloseDate: r.registrationCloseDate ?? undefined,
+      registrationDaysBefore: r.registrationDaysBefore ?? undefined,
+      registrationCloseTime: r.registrationCloseTime ?? undefined,
+      registrationOpenDaysBefore: r.registrationOpenDaysBefore ?? undefined,
       isTeamRegistration: !!r.isTeamRegistration,
       teamSize: r.teamSize ?? undefined,
-      teams: (r.teams as any) ?? []
+      teams: (r.teams as any) ?? [],
+      recurrenceGroupId: r.recurrenceGroupId ?? undefined,
+      blockOnlineRegistration: !!r.blockOnlineRegistration,
+      directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
+      directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
+      directRegistrationNotice: r.directRegistrationNotice ?? undefined,
+      attachedPdf: (r.attachedPdf as any) ?? null
     })) as Session[];
   } catch (error) {
     console.error("Failed to query sessions:", error);
@@ -378,9 +387,18 @@ export async function getSessionById(id: string): Promise<Session | null> {
       returnTime: r.returnTime ?? undefined,
       registrationOpenDate: r.registrationOpenDate ?? undefined,
       registrationCloseDate: r.registrationCloseDate ?? undefined,
+      registrationDaysBefore: r.registrationDaysBefore ?? undefined,
+      registrationCloseTime: r.registrationCloseTime ?? undefined,
+      registrationOpenDaysBefore: r.registrationOpenDaysBefore ?? undefined,
       isTeamRegistration: !!r.isTeamRegistration,
       teamSize: r.teamSize ?? undefined,
-      teams: (r.teams as any) ?? []
+      teams: (r.teams as any) ?? [],
+      recurrenceGroupId: r.recurrenceGroupId ?? undefined,
+      blockOnlineRegistration: !!r.blockOnlineRegistration,
+      directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
+      directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
+      directRegistrationNotice: r.directRegistrationNotice ?? undefined,
+      attachedPdf: (r.attachedPdf as any) ?? null
     } as Session;
   } catch (error) {
     console.error("Failed to get session:", error);
@@ -417,9 +435,18 @@ export async function createSession(data: Omit<Session, 'id'> & { id?: string })
       returnTime: data.returnTime || null,
       registrationOpenDate: data.registrationOpenDate || null,
       registrationCloseDate: data.registrationCloseDate || null,
+      registrationDaysBefore: data.registrationDaysBefore ?? null,
+      registrationCloseTime: data.registrationCloseTime || null,
+      registrationOpenDaysBefore: data.registrationOpenDaysBefore ?? null,
       isTeamRegistration: !!data.isTeamRegistration,
       teamSize: data.teamSize || null,
-      teams: data.teams || []
+      teams: data.teams || [],
+      recurrenceGroupId: data.recurrenceGroupId || null,
+      blockOnlineRegistration: !!data.blockOnlineRegistration,
+      directRegistrationTeacherId: data.directRegistrationTeacherId || null,
+      directRegistrationTeacherName: data.directRegistrationTeacherName || null,
+      directRegistrationNotice: data.directRegistrationNotice || null,
+      attachedPdf: data.attachedPdf || null
     };
 
     await db.insert(sessions).values(values).onConflictDoUpdate({
@@ -460,11 +487,22 @@ export async function updateSessionById(id: string, data: Partial<Session>): Pro
     if (data.returnTime !== undefined) payload.returnTime = data.returnTime;
     if (data.registrationOpenDate !== undefined) payload.registrationOpenDate = data.registrationOpenDate;
     if (data.registrationCloseDate !== undefined) payload.registrationCloseDate = data.registrationCloseDate;
+    if (data.registrationDaysBefore !== undefined) payload.registrationDaysBefore = data.registrationDaysBefore;
+    if (data.registrationCloseTime !== undefined) payload.registrationCloseTime = data.registrationCloseTime;
+    if (data.registrationOpenDaysBefore !== undefined) payload.registrationOpenDaysBefore = data.registrationOpenDaysBefore;
     if (data.isTeamRegistration !== undefined) payload.isTeamRegistration = data.isTeamRegistration;
     if (data.teamSize !== undefined) payload.teamSize = data.teamSize;
     if (data.teams !== undefined) payload.teams = data.teams;
+    if (data.recurrenceGroupId !== undefined) payload.recurrenceGroupId = data.recurrenceGroupId;
+    if (data.blockOnlineRegistration !== undefined) payload.blockOnlineRegistration = data.blockOnlineRegistration;
+    if (data.directRegistrationTeacherId !== undefined) payload.directRegistrationTeacherId = data.directRegistrationTeacherId;
+    if (data.directRegistrationTeacherName !== undefined) payload.directRegistrationTeacherName = data.directRegistrationTeacherName;
+    if (data.directRegistrationNotice !== undefined) payload.directRegistrationNotice = data.directRegistrationNotice;
+    if (data.attachedPdf !== undefined) payload.attachedPdf = data.attachedPdf;
 
-    await db.update(sessions).set(payload).where(eq(sessions.id, id));
+    if (Object.keys(payload).length > 0) {
+      await db.update(sessions).set(payload).where(eq(sessions.id, id));
+    }
   } catch (error) {
     console.error("Failed to update session:", error);
     throw new Error("Impossible de modifier la séance.", { cause: error });

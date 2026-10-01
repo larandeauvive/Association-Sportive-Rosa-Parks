@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
-  getSessionsList, saveSessionApi, deleteSessionApi, 
+  getSessionsList, saveSessionApi, updateSessionApi, deleteSessionApi, 
   getTeachersList, saveConvocationApi, deleteTeamFromSession, 
   enrollTeamInSession 
 } from '../lib/db';
@@ -72,7 +72,10 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
 
   const readFileAsAttachedPdf = (file: File): Promise<AttachedPdfDoc> => {
     return new Promise((resolve, reject) => {
-      if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+      const isPdf = file.name.toLowerCase().endsWith('.pdf') || 
+                    file.type.toLowerCase().includes('pdf') || 
+                    file.type === 'application/pdf';
+      if (!isPdf) {
         return reject(new Error("Seuls les fichiers au format PDF sont acceptés."));
       }
       if (file.size > 25 * 1024 * 1024) {
@@ -158,13 +161,16 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   }, [fetchSessionManagerData]);
 
   const handleDropPdfOnSheet = async (file: File) => {
-    if (!activeSession) return;
+    if (!activeSession) {
+      alert("Veuillez d'abord sélectionner une séance avant de glisser un document.");
+      return;
+    }
     setIsUploadingPdf(true);
     try {
       const doc = await readFileAsAttachedPdf(file);
       await updateSessionApi(activeSession.id, { attachedPdf: doc });
       setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, attachedPdf: doc } : s));
-      setNotification("✅ Document PDF joint à la feuille de séance avec succès !");
+      setNotification(`✅ Document "${doc.fileName}" joint à la feuille de séance avec succès !`);
     } catch (err: any) {
       alert(err?.message || "Erreur lors du dépôt du PDF.");
     } finally {
@@ -191,6 +197,7 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     try {
       const doc = await readFileAsAttachedPdf(file);
       setFormData(prev => ({ ...prev, attachedPdf: doc }));
+      setNotification(`✅ Fichier "${doc.fileName}" sélectionné (sera enregistré avec la séance).`);
     } catch (err: any) {
       alert(err?.message || "Erreur lors du dépôt du PDF.");
     }
@@ -1795,7 +1802,48 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
             </div>
           </form>
         ) : activeSession ? (
-          <div className="flex flex-col h-full">
+          <div 
+            className="flex flex-col h-full relative"
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsPdfDraggingOnSheet(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsPdfDraggingOnSheet(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+              setIsPdfDraggingOnSheet(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsPdfDraggingOnSheet(false);
+              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleDropPdfOnSheet(e.dataTransfer.files[0]);
+              }
+            }}
+          >
+            {/* Overlay visuel lors du glisser-déposer sur toute la feuille de séance */}
+            {isPdfDraggingOnSheet && (
+              <div className="absolute inset-0 z-50 bg-indigo-900/85 backdrop-blur-xs flex flex-col items-center justify-center p-6 text-white text-center rounded-2xl border-4 border-dashed border-indigo-300 animate-in fade-in duration-150 pointer-events-none">
+                <FileUp className="w-16 h-16 mb-4 text-indigo-200 animate-bounce" />
+                <h3 className="text-xl sm:text-2xl font-black">
+                  Déposez votre document PDF ici
+                </h3>
+                <p className="text-sm text-indigo-100 max-w-md mt-2 font-medium">
+                  Le PDF (recueil d'informations utiles, consignes, horaires, plan...) sera immédiatement joint à la feuille de séance « {activeSession.name} ».
+                </p>
+                <span className="mt-4 px-3 py-1 rounded-full bg-indigo-500/40 border border-indigo-300/40 text-xs font-semibold">
+                  Relâchez le document pour l'associer
+                </span>
+              </div>
+            )}
             <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
               <div>
                 <div className="flex items-center gap-2 flex-wrap mb-1.5">
