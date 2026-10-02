@@ -7,13 +7,15 @@ import {
 } from '../lib/db';
 import { 
   format, addMonths, subMonths, startOfMonth, endOfMonth, 
-  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval 
+  startOfWeek, endOfWeek, isSameMonth, isSameDay, eachDayOfInterval,
+  addWeeks, addDays, isWithinInterval, startOfDay, differenceInCalendarDays
 } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { 
   ChevronLeft, ChevronRight, X, Printer, Users, FileText, 
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
-  Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock
+  Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock,
+  ArrowRight, CheckCircle2, AlertCircle, Compass, CalendarDays, Zap, Flame, Check
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -63,14 +65,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
   }, [students, activeYear]);
 
-  // Mode d'affichage : 'agenda' (Planning / Liste adapté smartphone) ou 'month' (Grille mensuelle)
-  // Sur smartphone (< 768px) ou sur lien public partagé, privilégie immédiatement le mode planning fluide
-  const [viewMode, setViewMode] = useState<'month' | 'agenda'>(() => {
-    if (typeof window !== 'undefined' && (window.innerWidth < 768 || isPublic)) {
-      return 'agenda';
-    }
-    return 'month';
-  });
+  // Mode d'affichage : 'focus' (Focus 15 jours : cette semaine & semaine à venir), 'agenda' (Planning complet), 'month' (Grille mensuelle)
+  // Sur smartphone ou sur lien public partagé, privilégie immédiatement le focus sur les événements de la semaine et de la semaine à venir
+  const [viewMode, setViewMode] = useState<'focus' | 'agenda' | 'month'>('focus');
+
+  // Sous-filtre pour le mode Focus : 'all' (15 jours), 'thisWeek' (Cette semaine uniquement), 'nextWeek' (Semaine prochaine uniquement)
+  const [focusFilter, setFocusFilter] = useState<'all' | 'thisWeek' | 'nextWeek'>('all');
 
   // Filtre d'étendue en mode Planning : 'all' (Tous les événements de la saison) ou 'month' (Uniquement le mois affiché)
   const [agendaScope, setAgendaScope] = useState<'all' | 'month'>('all');
@@ -117,6 +117,112 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [newEventDirectRegistrationTeacherId, setNewEventDirectRegistrationTeacherId] = useState('');
   const [newEventDirectRegistrationTeacherName, setNewEventDirectRegistrationTeacherName] = useState('');
   const [newEventDirectRegistrationNotice, setNewEventDirectRegistrationNotice] = useState('');
+
+  // Repères temporels pour le Focus hebdomadaire
+  const today = useMemo(() => startOfDay(new Date()), []);
+  const currentWeekStart = useMemo(() => startOfWeek(today, { weekStartsOn: 1 }), [today]);
+  const currentWeekEnd = useMemo(() => endOfWeek(today, { weekStartsOn: 1 }), [today]);
+  const nextWeekStart = useMemo(() => startOfWeek(addWeeks(today, 1), { weekStartsOn: 1 }), [today]);
+  const nextWeekEnd = useMemo(() => endOfWeek(addWeeks(today, 1), { weekStartsOn: 1 }), [today]);
+
+  // Événements de la semaine en cours (Lundi à Dimanche)
+  const thisWeekEvents = useMemo(() => {
+    return events
+      .filter(e => {
+        if (!e.date) return false;
+        const dStr = e.date.slice(0, 10);
+        const dt = new Date(`${dStr}T12:00:00`);
+        return isWithinInterval(dt, { start: currentWeekStart, end: currentWeekEnd });
+      })
+      .sort((a, b) => {
+        const dDiff = a.date.localeCompare(b.date);
+        if (dDiff !== 0) return dDiff;
+        const timeA = a.type === 'session' ? (a.raw as Session).time : (a.raw as Convocation).departureDate?.includes('T') ? (a.raw as Convocation).departureDate.split('T')[1] : '';
+        const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
+        return (timeA || '').localeCompare(timeB || '');
+      });
+  }, [events, currentWeekStart, currentWeekEnd]);
+
+  // Événements de la semaine à venir (Lundi à Dimanche suivant)
+  const nextWeekEvents = useMemo(() => {
+    return events
+      .filter(e => {
+        if (!e.date) return false;
+        const dStr = e.date.slice(0, 10);
+        const dt = new Date(`${dStr}T12:00:00`);
+        return isWithinInterval(dt, { start: nextWeekStart, end: nextWeekEnd });
+      })
+      .sort((a, b) => {
+        const dDiff = a.date.localeCompare(b.date);
+        if (dDiff !== 0) return dDiff;
+        const timeA = a.type === 'session' ? (a.raw as Session).time : (a.raw as Convocation).departureDate?.includes('T') ? (a.raw as Convocation).departureDate.split('T')[1] : '';
+        const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
+        return (timeA || '').localeCompare(timeB || '');
+      });
+  }, [events, nextWeekStart, nextWeekEnd]);
+
+  const twoWeeksEventsCount = thisWeekEvents.length + nextWeekEvents.length;
+
+  // Badge relatif dynamique (Aujourd'hui, Demain, Dans X jours...)
+  const getEventRelativeBadge = useCallback((dateStr: string) => {
+    if (!dateStr) return { text: '', className: '', isToday: false, isTomorrow: false, isPast: false };
+    const cleanDateStr = dateStr.slice(0, 10);
+    const evDate = new Date(`${cleanDateStr}T12:00:00`);
+    const diffDays = differenceInCalendarDays(evDate, today);
+
+    if (diffDays === 0) {
+      return {
+        text: "Aujourd'hui",
+        className: 'bg-emerald-600 text-white font-black animate-pulse shadow-xs',
+        isToday: true,
+        isTomorrow: false,
+        isPast: false
+      };
+    }
+    if (diffDays === 1) {
+      return {
+        text: 'Demain',
+        className: 'bg-amber-500 text-white font-black shadow-xs',
+        isToday: false,
+        isTomorrow: true,
+        isPast: false
+      };
+    }
+    if (diffDays === -1) {
+      return {
+        text: 'Hier',
+        className: 'bg-slate-200 text-slate-700 font-semibold',
+        isToday: false,
+        isTomorrow: false,
+        isPast: true
+      };
+    }
+    if (diffDays < -1) {
+      return {
+        text: 'Passé',
+        className: 'bg-slate-100 text-slate-500 font-semibold',
+        isToday: false,
+        isTomorrow: false,
+        isPast: true
+      };
+    }
+    if (diffDays <= 6) {
+      return {
+        text: `Dans ${diffDays} jours`,
+        className: 'bg-indigo-100 text-indigo-800 font-bold',
+        isToday: false,
+        isTomorrow: false,
+        isPast: false
+      };
+    }
+    return {
+      text: `Dans ${diffDays} jours`,
+      className: 'bg-purple-100 text-purple-800 font-bold',
+      isToday: false,
+      isTomorrow: false,
+      isPast: false
+    };
+  }, [today]);
 
   // Événements du mois affiché, triés chronologiquement pour le mode planning/mobile
   const currentMonthEvents = useMemo(() => {
@@ -668,6 +774,231 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     alert('Lien du calendrier public copié dans le presse-papiers !');
   };
 
+  const renderFocusEventCard = (event: CalendarEvent) => {
+    const isSession = event.type === 'session';
+    const rawSession = isSession ? (event.raw as Session) : null;
+    const rawConv = !isSession ? (event.raw as Convocation) : null;
+    const cleanDateStr = event.date.slice(0, 10);
+    const eventDateObj = new Date(`${cleanDateStr}T12:00:00`);
+    const isPast = new Date(event.date).setHours(23, 59, 59, 999) < new Date().getTime();
+    const isFull = rawSession?.maxParticipants !== undefined && ((rawSession.enrolledStudentIds || []).length >= rawSession.maxParticipants);
+    const enrolledCount = event.studentIds.length;
+    const maxCap = rawSession?.maxParticipants;
+    const rel = getEventRelativeBadge(event.date);
+
+    return (
+      <div
+        key={event.id}
+        onClick={() => {
+          if (isPublic && isSession && rawSession) {
+            if (rawSession.blockOnlineRegistration) {
+              setSelectedEvent(event);
+            } else {
+              setEnrollingSession(rawSession);
+            }
+          } else {
+            setSelectedEvent(event);
+          }
+        }}
+        className={`group bg-white rounded-2xl border-2 transition-all p-4 sm:p-5 shadow-xs hover:shadow-md cursor-pointer active:scale-[0.99] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+          rel.isToday
+            ? 'border-emerald-500 bg-emerald-50/20 ring-2 ring-emerald-500/20'
+            : rel.isTomorrow
+            ? 'border-amber-400 bg-amber-50/20'
+            : isSession
+            ? 'border-indigo-100 hover:border-indigo-400'
+            : 'border-emerald-100 hover:border-emerald-400'
+        }`}
+      >
+        {/* Colonne Date & Details */}
+        <div className="flex items-start sm:items-center gap-3.5 min-w-0 flex-1">
+          {/* Badge Date */}
+          <div className={`shrink-0 w-16 sm:w-20 py-2 sm:py-2.5 rounded-2xl text-center border flex flex-col justify-center shadow-xs transition-transform group-hover:scale-105 ${
+            rel.isToday
+              ? 'bg-emerald-600 text-white border-emerald-700'
+              : rel.isTomorrow
+              ? 'bg-amber-500 text-white border-amber-600'
+              : 'bg-slate-100 text-slate-800 border-slate-200/90'
+          }`}>
+            <span className={`text-[10px] font-black uppercase tracking-wider ${
+              rel.isToday || rel.isTomorrow ? 'text-white/90' : 'text-slate-500'
+            }`}>
+              {format(eventDateObj, 'EEE', { locale: fr })}
+            </span>
+            <span className="text-xl sm:text-2xl font-black leading-none my-0.5 tracking-tight">
+              {format(eventDateObj, 'dd')}
+            </span>
+            <span className={`text-[10px] font-bold uppercase tracking-wider ${
+              rel.isToday || rel.isTomorrow ? 'text-white/90' : 'text-indigo-700'
+            }`}>
+              {format(eventDateObj, 'MMM', { locale: fr })}
+            </span>
+          </div>
+
+          {/* Corps de l'événement */}
+          <div className="space-y-1.5 min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {/* Badge relatif */}
+              <span className={`text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-full ${rel.className}`}>
+                {rel.text}
+              </span>
+
+              {/* Type */}
+              <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                isSession ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'
+              }`}>
+                {isSession ? 'Séance' : 'Compétition UNSS'}
+              </span>
+
+              {rawSession?.isTeamRegistration && (
+                <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Users className="w-3 h-3" /> Tournoi ({rawSession.teamSize || 4} élèves)
+                </span>
+              )}
+
+              {rawSession?.blockOnlineRegistration && (
+                <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Lock className="w-3 h-3 text-amber-700" />
+                  {rawSession.directRegistrationTeacherName ? `Voir ${rawSession.directRegistrationTeacherName}` : 'Direct prof'}
+                </span>
+              )}
+
+              {isFull && !isPast && (
+                <span className="text-[10px] font-bold bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">
+                  Complet
+                </span>
+              )}
+            </div>
+
+            <h3 className="text-base sm:text-lg font-black text-slate-900 leading-snug group-hover:text-indigo-600 transition-colors">
+              {event.title}
+            </h3>
+
+            <div className="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs text-slate-600 font-semibold">
+              <span className="flex items-center gap-1 text-slate-700">
+                <Clock className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span>
+                  {isSession 
+                    ? `${rawSession?.time || ''}${rawSession?.endTime ? ` - ${rawSession.endTime}` : ''}` 
+                    : (rawConv?.departureDate?.includes('T') ? rawConv.departureDate.split('T')[1] : '')}
+                </span>
+              </span>
+
+              {(rawSession?.location || rawConv?.guides || rawConv?.meetingLocation) && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <span className="flex items-center gap-1 text-slate-700">
+                    <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <span className="truncate max-w-[200px] sm:max-w-none">
+                      {rawSession?.location || rawConv?.meetingLocation || rawConv?.guides}
+                    </span>
+                  </span>
+                </>
+              )}
+
+              <span className="text-slate-300">•</span>
+              <span className="flex items-center gap-1 text-slate-700">
+                <Users className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span>
+                  {enrolledCount} inscrit{enrolledCount > 1 ? 's' : ''} {maxCap ? `/ ${maxCap}` : ''}
+                </span>
+              </span>
+
+              {rawSession?.needSnack && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-amber-700 font-bold">🍪 Goûter</span>
+                </>
+              )}
+            </div>
+
+            {rawSession?.description && (
+              <p className="text-xs text-slate-500 line-clamp-1 font-normal">
+                {rawSession.description}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Colonne droite : Actions CTA */}
+        <div className="shrink-0 w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
+          {isPublic && isSession && (
+            !isPast && !isFull ? (
+              rawSession?.blockOnlineRegistration ? (
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shadow-2xs">
+                  <Lock className="w-3.5 h-3.5 text-amber-700" />
+                  {rawSession.directRegistrationTeacherName 
+                    ? `Avec ${rawSession.directRegistrationTeacherName}` 
+                    : "Auprès du professeur"}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (rawSession) {
+                      setEnrollingSession(rawSession);
+                    }
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-indigo-500/20"
+                >
+                  <span>M'inscrire</span>
+                  <ChevronRight className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              )
+            ) : (
+              <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl">
+                {isPast ? 'Séance passée' : 'Séance complète'}
+              </span>
+            )
+          )}
+
+          {isPublic && !isSession && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedEvent(event);
+              }}
+              className="w-full sm:w-auto px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <span>Détails</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {!isPublic && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedEvent(event);
+                }}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Gérer
+              </button>
+              {isSession && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openEditModal(event);
+                  }}
+                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                  title="Modifier"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) {
     return <div className="text-center py-20 text-slate-500 font-medium">Chargement du calendrier...</div>;
   }
@@ -678,69 +1009,115 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
       <div className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col gap-3 sm:gap-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center shrink-0 border border-indigo-100">
-              <CalendarIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 border ${
+              viewMode === 'focus' 
+                ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm' 
+                : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+            }`}>
+              {viewMode === 'focus' ? (
+                <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
+              ) : (
+                <CalendarIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+              )}
             </div>
             <div className="min-w-0">
-              <h2 className="text-lg sm:text-2xl font-black text-slate-900 capitalize tracking-tight truncate">
-                {format(currentMonth, 'MMMM yyyy', { locale: fr })}
+              <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight truncate">
+                {viewMode === 'focus' 
+                  ? "Focus semaine & à venir" 
+                  : viewMode === 'agenda' 
+                  ? "Planning complet de la saison" 
+                  : format(currentMonth, 'MMMM yyyy', { locale: fr })}
               </h2>
               <p className="text-xs sm:text-sm font-semibold text-slate-500 truncate">
-                {isPublic 
+                {viewMode === 'focus'
+                  ? `Du ${format(currentWeekStart, 'd MMMM', { locale: fr })} au ${format(nextWeekEnd, 'd MMMM yyyy', { locale: fr })}`
+                  : isPublic 
                   ? "Séances & compétitions — AS Lycée Rosa Parks" 
                   : "Gérez les séances et convocations"}
               </p>
             </div>
           </div>
 
-          {/* Navigation Mois (Précédent / Aujourd'hui / Événements / Suivant) */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button 
-              onClick={prevMonth} 
-              className="p-2 sm:p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer" 
-              title="Mois précédent"
-              aria-label="Mois précédent"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => setCurrentMonth(new Date())}
-              className="hidden md:inline-flex px-3 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors cursor-pointer"
-            >
-              Aujourd'hui
-            </button>
-            {nearestEvent && !isSameMonth(new Date(nearestEvent.date), currentMonth) && (
+          {/* Navigation Mois ou Action Focus */}
+          {viewMode === 'month' ? (
+            <div className="flex items-center gap-1.5 shrink-0">
               <button 
-                type="button"
-                onClick={() => setCurrentMonth(new Date(nearestEvent.date))}
-                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-200 transition-colors cursor-pointer"
-                title={`Afficher le mois des événements (${format(new Date(nearestEvent.date), 'MMMM yyyy', { locale: fr })})`}
+                onClick={prevMonth} 
+                className="p-2 sm:p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer" 
+                title="Mois précédent"
+                aria-label="Mois précédent"
               >
-                <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Voir {format(new Date(nearestEvent.date), 'MMM yyyy', { locale: fr })}</span>
+                <ChevronLeft className="w-5 h-5" />
               </button>
-            )}
-            <button 
-              onClick={nextMonth} 
-              className="p-2 sm:p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer" 
-              title="Mois suivant"
-              aria-label="Mois suivant"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          </div>
+              <button 
+                onClick={() => setCurrentMonth(new Date())}
+                className="hidden md:inline-flex px-3 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors cursor-pointer"
+              >
+                Aujourd'hui
+              </button>
+              {nearestEvent && !isSameMonth(new Date(nearestEvent.date), currentMonth) && (
+                <button 
+                  type="button"
+                  onClick={() => setCurrentMonth(new Date(nearestEvent.date))}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-200 transition-colors cursor-pointer"
+                  title={`Afficher le mois des événements (${format(new Date(nearestEvent.date), 'MMMM yyyy', { locale: fr })})`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Voir {format(new Date(nearestEvent.date), 'MMM yyyy', { locale: fr })}</span>
+                </button>
+              )}
+              <button 
+                onClick={nextMonth} 
+                className="p-2 sm:p-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer" 
+                title="Mois suivant"
+                aria-label="Mois suivant"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          ) : viewMode === 'focus' ? (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200">
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+                <span>{twoWeeksEventsCount} événement{twoWeeksEventsCount > 1 ? 's' : ''} sur 15j</span>
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode('focus')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-200 transition-all cursor-pointer shadow-2xs"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="hidden sm:inline">Revenir au Focus</span>
+                <span className="sm:hidden">Focus</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Barre d'outils mobile : Onglets Planning / Mois & Actions */}
+        {/* Barre d'outils tactile : Onglets Focus / Planning / Mois & Actions */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
           {/* Sélecteur de vue tactile pour smartphone & mode planning */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
               <button
                 type="button"
+                onClick={() => setViewMode('focus')}
+                className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'focus' ? 'bg-indigo-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Focus sur cette semaine et la semaine prochaine"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Focus 15j ({twoWeeksEventsCount})</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setViewMode('agenda')}
-                className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'agenda' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'agenda' ? 'bg-white text-indigo-700 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Users className="w-4 h-4" />
@@ -749,8 +1126,8 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               <button
                 type="button"
                 onClick={() => setViewMode('month')}
-                className={`px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'month' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'month' ? 'bg-white text-indigo-700 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <CalendarIcon className="w-4 h-4" />
@@ -903,9 +1280,267 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         </div>
       )}
 
-      {/* VUE 1 : VUE AGENDA / PLANNING (PARFAITEMENT ADAPTÉE AUX SMARTPHONES) */}
-      {viewMode === 'agenda' ? (
+      {/* VUE 0 : FOCUS SEMAINE & SEMAINE À VENIR */}
+      {viewMode === 'focus' ? (
+        <div className="space-y-4 sm:space-y-6 mb-6 animate-in fade-in duration-150">
+          {/* Sous-filtre tactile & indicateur */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/90 shadow-xs">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <span className="text-xs font-bold text-slate-500 mr-1 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                Filtrer :
+              </span>
+              <button
+                type="button"
+                onClick={() => setFocusFilter('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  focusFilter === 'all'
+                    ? 'bg-slate-900 text-white shadow-xs font-black'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Tous les 15 jours ({twoWeeksEventsCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFocusFilter('thisWeek')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  focusFilter === 'thisWeek'
+                    ? 'bg-indigo-600 text-white shadow-xs font-black'
+                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                }`}
+              >
+                📍 Cette semaine ({thisWeekEvents.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFocusFilter('nextWeek')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  focusFilter === 'nextWeek'
+                    ? 'bg-purple-600 text-white shadow-xs font-black'
+                    : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                }`}
+              >
+                🚀 Semaine prochaine ({nextWeekEvents.length})
+              </button>
+            </div>
+
+            <div className="text-xs font-semibold text-slate-500 hidden sm:block">
+              Aujourd'hui : {format(today, 'EEEE dd MMMM yyyy', { locale: fr })}
+            </div>
+          </div>
+
+          {/* Cartes récapitulatives interactives */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+            {/* Carte 1 : Cette semaine */}
+            <div
+              onClick={() => setFocusFilter(focusFilter === 'thisWeek' ? 'all' : 'thisWeek')}
+              className={`p-4 sm:p-5 rounded-2xl border-2 transition-all cursor-pointer ${
+                thisWeekEvents.length > 0
+                  ? focusFilter === 'thisWeek'
+                    ? 'bg-gradient-to-br from-indigo-500/10 to-indigo-50 border-indigo-600 shadow-md ring-2 ring-indigo-500/20'
+                    : 'bg-white border-indigo-200 hover:border-indigo-400 shadow-xs'
+                  : 'bg-slate-50/80 border-slate-200 text-slate-500'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm ${
+                    thisWeekEvents.length > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    📍
+                  </span>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 leading-tight">
+                      Cette semaine
+                    </h3>
+                    <p className="text-[11px] font-semibold text-slate-500">
+                      Du {format(currentWeekStart, 'd MMMM', { locale: fr })} au {format(currentWeekEnd, 'd MMMM yyyy', { locale: fr })}
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                  thisWeekEvents.length > 0 
+                    ? 'bg-indigo-600 text-white shadow-2xs' 
+                    : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {thisWeekEvents.length} {thisWeekEvents.length > 1 ? 'événements' : 'événement'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                {thisWeekEvents.length > 0 
+                  ? `${thisWeekEvents.length} rendez-vous au programme cette semaine. Cliquez pour zoomer.` 
+                  : "Aucune séance ni compétition prévue cette semaine (repos / trêve)."}
+              </p>
+            </div>
+
+            {/* Carte 2 : Semaine à venir */}
+            <div
+              onClick={() => setFocusFilter(focusFilter === 'nextWeek' ? 'all' : 'nextWeek')}
+              className={`p-4 sm:p-5 rounded-2xl border-2 transition-all cursor-pointer ${
+                nextWeekEvents.length > 0
+                  ? focusFilter === 'nextWeek'
+                    ? 'bg-gradient-to-br from-purple-500/10 to-purple-50 border-purple-600 shadow-md ring-2 ring-purple-500/20'
+                    : 'bg-white border-purple-200 hover:border-purple-400 shadow-xs'
+                  : 'bg-slate-50/80 border-slate-200 text-slate-500'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2.5">
+                  <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm ${
+                    nextWeekEvents.length > 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    🚀
+                  </span>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900 leading-tight">
+                      Semaine à venir
+                    </h3>
+                    <p className="text-[11px] font-semibold text-slate-500">
+                      Du {format(nextWeekStart, 'd MMMM', { locale: fr })} au {format(nextWeekEnd, 'd MMMM yyyy', { locale: fr })}
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                  nextWeekEvents.length > 0 
+                    ? 'bg-purple-600 text-white shadow-2xs' 
+                    : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {nextWeekEvents.length} {nextWeekEvents.length > 1 ? 'événements' : 'événement'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                {nextWeekEvents.length > 0 
+                  ? `${nextWeekEvents.length} rendez-vous programmés la semaine prochaine. Anticipez vos inscriptions !` 
+                  : "Aucun événement programmé pour la semaine prochaine."}
+              </p>
+            </div>
+          </div>
+
+          {/* CAS OÙ LES 2 SEMAINES SONT VIDES */}
+          {twoWeeksEventsCount === 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-4 shadow-xs">
+              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto border border-indigo-100">
+                <CalendarDays className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Aucun événement sur les 15 prochains jours</h3>
+                <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto mt-1 leading-relaxed">
+                  Période calme (vacances scolaires, examens ou pause sportive).
+                  {nearestEvent && ` Prochain rendez-vous enregistré : le ${format(new Date(nearestEvent.date), 'dd MMMM yyyy', { locale: fr })} (${nearestEvent.title}).`}
+                </p>
+              </div>
+              <div className="pt-2 flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('agenda')}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Consulter le planning complet ({events.length} événements)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 1 : CETTE SEMAINE */}
+          {(focusFilter === 'all' || focusFilter === 'thisWeek') && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2 px-1 pt-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-black uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-3 py-1 rounded-lg">
+                    📍 Cette semaine
+                  </span>
+                  <span className="text-xs font-bold text-slate-500 truncate">
+                    du {format(currentWeekStart, 'd MMMM', { locale: fr })} au {format(currentWeekEnd, 'd MMMM', { locale: fr })}
+                  </span>
+                </div>
+                <span className="text-xs font-bold text-slate-500 shrink-0">
+                  {thisWeekEvents.length} événement{thisWeekEvents.length > 1 ? 's' : ''}
+                </span>
+              </div>
+
+              {thisWeekEvents.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 text-center space-y-2">
+                  <p className="text-sm font-bold text-slate-700">Aucun événement prévu cette semaine</p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Pas d'entraînement ni de compétition officielle du {format(currentWeekStart, 'd MMMM', { locale: fr })} au {format(currentWeekEnd, 'd MMMM', { locale: fr })}.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {thisWeekEvents.map(renderFocusEventCard)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SECTION 2 : SEMAINE PROCHAINE */}
+          {(focusFilter === 'all' || focusFilter === 'nextWeek') && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2 px-1 pt-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-black uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200/80 px-3 py-1 rounded-lg">
+                    🚀 Semaine prochaine
+                  </span>
+                  <span className="text-xs font-bold text-slate-500 truncate">
+                    du {format(nextWeekStart, 'd MMMM', { locale: fr })} au {format(nextWeekEnd, 'd MMMM', { locale: fr })}
+                  </span>
+                </div>
+                <span className="text-xs font-bold text-slate-500 shrink-0">
+                  {nextWeekEvents.length} événement{nextWeekEvents.length > 1 ? 's' : ''}
+                </span>
+              </div>
+
+              {nextWeekEvents.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 text-center space-y-2">
+                  <p className="text-sm font-bold text-slate-700">Aucun événement pour la semaine prochaine</p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Le planning de la semaine suivante n'a pas encore de créneau enregistré.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {nextWeekEvents.map(renderFocusEventCard)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Bouton de bascule vers le planning complet */}
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={() => setViewMode('agenda')}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 rounded-xl text-xs font-bold transition-all border border-slate-200 cursor-pointer"
+            >
+              <Users className="w-4 h-4 text-slate-500" />
+              <span>Consulter l'intégralité du planning annuel ({events.length} événements)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      ) : viewMode === 'agenda' ? (
         <div className="space-y-4 mb-6">
+          {/* Bannière de retour rapide au Focus 15j */}
+          <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-indigo-950 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-ping shrink-0" />
+              <p className="text-xs sm:text-sm font-bold truncate">
+                {twoWeeksEventsCount > 0 
+                  ? `Focus 15 jours : ${thisWeekEvents.length} événement(s) cette semaine • ${nextWeekEvents.length} la semaine prochaine` 
+                  : "Consultez le focus sur les événements de la semaine et de la semaine à venir"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setViewMode('focus')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-xs shrink-0 cursor-pointer self-start sm:self-auto"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Voir le Focus 15j ({twoWeeksEventsCount})</span>
+            </button>
+          </div>
           {events.length === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3 shadow-xs">
               <div className="w-12 h-12 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center mx-auto">
@@ -1084,6 +1719,25 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
       ) : (
         /* VUE 2 : GRILLE MENSUELLE CLASSIQUE (OPTIMISÉE MOBILE) */
         <div className="space-y-4 mb-6">
+          {/* Bannière de retour rapide au Focus 15j */}
+          <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-indigo-950 shadow-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-ping shrink-0" />
+              <p className="text-xs sm:text-sm font-bold truncate">
+                {twoWeeksEventsCount > 0 
+                  ? `Focus 15 jours : ${thisWeekEvents.length} événement(s) cette semaine • ${nextWeekEvents.length} la semaine prochaine` 
+                  : "Consultez le focus sur les événements de la semaine et de la semaine à venir"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setViewMode('focus')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-xs shrink-0 cursor-pointer self-start sm:self-auto"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Voir le Focus 15j ({twoWeeksEventsCount})</span>
+            </button>
+          </div>
           {currentMonthEvents.length === 0 && events.length > 0 && (
             <div className="bg-amber-50 border border-amber-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 shadow-xs animate-in fade-in duration-200">
               <div className="flex items-center gap-3 min-w-0">
