@@ -53,17 +53,59 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Élèves internes (récupération automatique si non fournis en mode public)
+  // Élèves internes (récupération automatique exhaustive pour affichage public)
   const [internalStudents, setInternalStudents] = useState<Student[]>(students || []);
   useEffect(() => {
     if (students && students.length > 0) {
       setInternalStudents(students);
-    } else {
-      getStudentsList(activeYear).then(res => {
-        if (res && res.length > 0) setInternalStudents(res);
-      }).catch(() => {});
     }
-  }, [students, activeYear]);
+    // Toujours charger l'ensemble complet de l'annuaire pour résoudre les noms de tous les inscrits
+    getStudentsList().then(all => {
+      if (all && all.length > 0) {
+        setInternalStudents(prev => {
+          const map = new Map<string, Student>();
+          prev.forEach(s => map.set(s.id, s));
+          all.forEach(s => map.set(s.id, s));
+          return Array.from(map.values());
+        });
+      }
+    }).catch(() => {});
+  }, [students]);
+
+  const effectiveStudents = useMemo(() => {
+    if (students && students.length > 0) {
+      // Fusionner avec internalStudents pour être certain de ne perdre aucun élève d'une autre année
+      const map = new Map<string, Student>();
+      internalStudents.forEach(s => map.set(s.id, s));
+      students.forEach(s => map.set(s.id, s));
+      return Array.from(map.values());
+    }
+    return internalStudents;
+  }, [students, internalStudents]);
+
+  const getEnrolledStudents = useCallback((studentIds: string[]) => {
+    if (!studentIds || studentIds.length === 0) return [];
+    return studentIds.map(sid => {
+      const cleanSid = (sid || '').trim();
+      const st = effectiveStudents.find(s => s.id === cleanSid || (s.id && s.id.toLowerCase() === cleanSid.toLowerCase()));
+      if (st) {
+        return {
+          id: st.id,
+          name: `${st.lastName} ${st.firstName}`.trim(),
+          lastName: st.lastName,
+          firstName: st.firstName,
+          classGroup: st.classGroup
+        };
+      }
+      return {
+        id: cleanSid,
+        name: cleanSid,
+        lastName: cleanSid,
+        firstName: '',
+        classGroup: ''
+      };
+    }).sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+  }, [effectiveStudents]);
 
   // Mode d'affichage : 'focus' (Focus 15 jours : cette semaine & semaine à venir), 'agenda' (Planning complet), 'month' (Grille mensuelle)
   // Sur smartphone ou sur lien public partagé, privilégie immédiatement le focus sur les événements de la semaine et de la semaine à venir
@@ -783,6 +825,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     const isPast = new Date(event.date).setHours(23, 59, 59, 999) < new Date().getTime();
     const isFull = rawSession?.maxParticipants !== undefined && ((rawSession.enrolledStudentIds || []).length >= rawSession.maxParticipants);
     const enrolledCount = event.studentIds.length;
+    const enrolledStudents = getEnrolledStudents(event.studentIds);
     const maxCap = rawSession?.maxParticipants;
     const rel = getEventRelativeBadge(event.date);
 
@@ -790,15 +833,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
       <div
         key={event.id}
         onClick={() => {
-          if (isPublic && isSession && rawSession) {
-            if (rawSession.blockOnlineRegistration) {
-              setSelectedEvent(event);
-            } else {
-              setEnrollingSession(rawSession);
-            }
-          } else {
-            setSelectedEvent(event);
-          }
+          setSelectedEvent(event);
         }}
         className={`group bg-white rounded-2xl border-2 transition-all p-4 sm:p-5 shadow-xs hover:shadow-md cursor-pointer active:scale-[0.99] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
           rel.isToday
@@ -917,40 +952,127 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 {rawSession.description}
               </p>
             )}
+
+            {/* Noms des élèves inscrits affichés directement sur la carte */}
+            <div className="pt-2 border-t border-slate-100/90 mt-2">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Élèves inscrits ({enrolledStudents.length}{maxCap ? ` / ${maxCap} places` : ''}) :</span>
+                </span>
+                {enrolledStudents.length > 0 && (
+                  <span className="text-[10px] font-semibold text-slate-400 hidden sm:inline">
+                    Cliquez sur la séance pour la fiche détaillée
+                  </span>
+                )}
+              </div>
+
+              {enrolledStudents.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">
+                  Aucun élève encore inscrit à ce créneau.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {enrolledStudents.map((st) => (
+                    <span
+                      key={st.id}
+                      className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-indigo-50/90 hover:bg-indigo-100 text-indigo-950 font-bold border border-indigo-200/80 transition-colors shadow-2xs"
+                      title={`${st.name} ${st.classGroup ? `(${st.classGroup})` : ''}`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                      <span>{st.name}</span>
+                      {st.classGroup && (
+                        <span className="text-[10px] font-semibold text-indigo-700 bg-white/90 px-1.5 py-0.5 rounded border border-indigo-100 ml-0.5">
+                          {st.classGroup}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Si tournoi avec équipes */}
+              {rawSession?.isTeamRegistration && (rawSession.teams || []).length > 0 && (
+                <div className="mt-2 pt-2 border-t border-purple-100/80 space-y-1.5">
+                  <span className="text-xs font-black text-purple-900 flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Équipes enregistrées ({rawSession.teams!.length}) :</span>
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {rawSession.teams!.map((team, idx) => (
+                      <div key={team.id || idx} className="bg-purple-50/70 p-2 rounded-xl border border-purple-200 text-xs">
+                        <div className="font-bold text-purple-950 flex items-center justify-between mb-1">
+                          <span>{team.name}</span>
+                          <span className="text-[10px] font-semibold text-purple-700 bg-white px-1.5 py-0.5 rounded border border-purple-200">
+                            {team.studentIds?.length || 0} / {rawSession.teamSize || 4} élèves
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {(team.studentIds || []).map(sid => {
+                            const st = effectiveStudents.find(s => s.id === sid);
+                            return (
+                              <span key={sid} className="bg-white px-1.5 py-0.5 rounded text-[11px] font-medium text-slate-800 border border-purple-100">
+                                {st ? `${st.lastName} ${st.firstName}` : sid}
+                                {st?.classGroup ? ` (${st.classGroup})` : ''}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* Colonne droite : Actions CTA */}
         <div className="shrink-0 w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
           {isPublic && isSession && (
-            !isPast && !isFull ? (
-              rawSession?.blockOnlineRegistration ? (
-                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shadow-2xs">
-                  <Lock className="w-3.5 h-3.5 text-amber-700" />
-                  {rawSession.directRegistrationTeacherName 
-                    ? `Avec ${rawSession.directRegistrationTeacherName}` 
-                    : "Auprès du professeur"}
-                </span>
+            <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedEvent(event);
+                }}
+                className="flex-1 sm:flex-initial px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                title="Consulter les détails et la liste des inscrits"
+              >
+                <Users className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Inscrits ({enrolledCount})</span>
+              </button>
+
+              {!isPast && !isFull ? (
+                rawSession?.blockOnlineRegistration ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl shadow-2xs">
+                    <Lock className="w-3.5 h-3.5 text-amber-700" />
+                    {rawSession.directRegistrationTeacherName 
+                      ? `Avec ${rawSession.directRegistrationTeacherName}` 
+                      : "Auprès du professeur"}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (rawSession) {
+                        setEnrollingSession(rawSession);
+                      }
+                    }}
+                    className="flex-1 sm:flex-initial px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-indigo-500/20"
+                  >
+                    <span>{rawSession?.isTeamRegistration ? 'Inscrire équipe' : "M'inscrire"}</span>
+                    <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </button>
+                )
               ) : (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (rawSession) {
-                      setEnrollingSession(rawSession);
-                    }
-                  }}
-                  className="w-full sm:w-auto px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-indigo-500/20"
-                >
-                  <span>M'inscrire</span>
-                  <ChevronRight className="w-4 h-4 stroke-[2.5]" />
-                </button>
-              )
-            ) : (
-              <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl">
-                {isPast ? 'Séance passée' : 'Séance complète'}
-              </span>
-            )
+                <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl">
+                  {isPast ? 'Passée' : 'Complet'}
+                </span>
+              )}
+            </div>
           )}
 
           {isPublic && !isSession && (
@@ -960,9 +1082,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 e.stopPropagation();
                 setSelectedEvent(event);
               }}
-              className="w-full sm:w-auto px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+              className="w-full sm:w-auto px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <span>Détails</span>
+              <Users className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Inscrits & Détails ({enrolledCount})</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           )}
@@ -1609,11 +1732,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                         <div
                           key={event.id}
                           onClick={() => {
-                            if (isPublic && isSession && rawSession) {
-                              setEnrollingSession(rawSession);
-                            } else {
-                              setSelectedEvent(event);
-                            }
+                            setSelectedEvent(event);
                           }}
                           className={`bg-white rounded-2xl border-2 transition-all p-3.5 sm:p-4 shadow-xs hover:shadow-md cursor-pointer active:scale-[0.99] ${
                             isSession ? 'border-indigo-100 hover:border-indigo-400' : 'border-emerald-100 hover:border-emerald-400'
@@ -1676,6 +1795,40 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                                   </>
                                 )}
                               </div>
+
+                              {/* Noms des inscrits affichés en vue planning */}
+                              {(() => {
+                                const enrolledStudents = getEnrolledStudents(event.studentIds);
+                                return (
+                                  <div className="pt-1.5 border-t border-slate-100/90 mt-1">
+                                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-700 mb-1">
+                                      <Users className="w-3 h-3 text-indigo-600" />
+                                      <span>Inscrits ({enrolledStudents.length}{rawSession?.maxParticipants ? ` / ${rawSession.maxParticipants}` : ''}) :</span>
+                                    </div>
+                                    {enrolledStudents.length === 0 ? (
+                                      <span className="text-[11px] text-slate-400 italic">Aucun élève inscrit</span>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1">
+                                        {enrolledStudents.map(st => (
+                                          <span
+                                            key={st.id}
+                                            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-indigo-50/90 text-indigo-950 font-bold border border-indigo-200/70 shadow-2xs"
+                                            title={`${st.name} ${st.classGroup ? `(${st.classGroup})` : ''}`}
+                                          >
+                                            <span className="w-1 h-1 rounded-full bg-indigo-500" />
+                                            <span>{st.name}</span>
+                                            {st.classGroup && (
+                                              <span className="text-[9px] text-indigo-700 bg-white px-1 py-0.2 rounded border border-indigo-100 font-semibold">
+                                                {st.classGroup}
+                                              </span>
+                                            )}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             <div className="shrink-0 flex flex-col items-end justify-between self-stretch">
@@ -1815,40 +1968,50 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                   </div>
                   
                   <div className="space-y-1 mt-1 sm:mt-2">
-                    {dayEvents.map(event => (
-                      <button
-                        key={event.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isPublic && event.type === 'session') {
-                            const rawSes = event.raw as Session;
-                            if (rawSes.blockOnlineRegistration) {
-                              setSelectedEvent(event);
-                            } else {
-                              setEnrollingSession(rawSes);
-                            }
-                          } else {
+                    {dayEvents.map(event => {
+                      const enrolled = getEnrolledStudents(event.studentIds);
+                      const titleTooltip = enrolled.length > 0 
+                        ? `${event.title} • Inscrits (${enrolled.length}) : ${enrolled.map(s => s.name).join(', ')}`
+                        : `${event.title} • Aucun inscrit`;
+
+                      return (
+                        <button
+                          key={event.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setSelectedEvent(event);
-                          }
-                        }}
-                        className={`w-full text-left px-1.5 sm:px-2.5 py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-semibold truncate transition-all duration-200 border cursor-pointer
-                          ${event.type === 'session' 
-                            ? ((event.raw as Session)?.blockOnlineRegistration
-                                ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100 hover:border-amber-400 shadow-2xs font-bold'
-                                : 'bg-indigo-50/90 text-indigo-700 border-indigo-200/70 hover:bg-indigo-100 hover:border-indigo-300 shadow-2xs')
-                            : 'bg-emerald-50/90 text-emerald-700 border-emerald-200/70 hover:bg-emerald-100 hover:border-emerald-300 shadow-2xs'
-                          }
-                        `}
-                        title={event.title}
-                      >
-                        <span className="truncate flex items-center gap-1">
-                          {(event.raw as Session)?.blockOnlineRegistration && (
-                            <Lock className="w-3 h-3 text-amber-700 shrink-0" />
+                          }}
+                          className={`w-full text-left px-1.5 sm:px-2 py-1.5 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-semibold transition-all duration-200 border cursor-pointer ${
+                            event.type === 'session' 
+                              ? ((event.raw as Session)?.blockOnlineRegistration
+                                  ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100 hover:border-amber-400 shadow-2xs font-bold'
+                                  : 'bg-indigo-50/90 text-indigo-700 border-indigo-200/70 hover:bg-indigo-100 hover:border-indigo-300 shadow-2xs')
+                              : 'bg-emerald-50/90 text-emerald-700 border-emerald-200/70 hover:bg-emerald-100 hover:border-emerald-300 shadow-2xs'
+                          }`}
+                          title={titleTooltip}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="truncate flex items-center gap-1 min-w-0 font-bold">
+                              {(event.raw as Session)?.blockOnlineRegistration && (
+                                <Lock className="w-3 h-3 text-amber-700 shrink-0" />
+                              )}
+                              <span className="truncate">{event.title}</span>
+                            </span>
+                            {enrolled.length > 0 && (
+                              <span className="text-[9px] font-black bg-indigo-600 text-white px-1.5 py-0.2 rounded-full shrink-0 shadow-2xs">
+                                {enrolled.length}
+                              </span>
+                            )}
+                          </div>
+                          {enrolled.length > 0 && (
+                            <div className="text-[9px] font-semibold text-slate-700 truncate mt-1 pt-0.5 border-t border-slate-200/60 flex items-center gap-1">
+                              <span className="text-indigo-600 font-bold">👥</span>
+                              <span className="truncate">{enrolled.map(s => s.name).join(', ')}</span>
+                            </div>
                           )}
-                          <span className="truncate">{event.title}</span>
-                        </span>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -2013,212 +2176,244 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 bg-slate-50 overscroll-contain">
               {!isPublic && (
-                <>
-                  <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 mb-6">
-                    <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
-                      <Printer className="w-4 h-4 text-slate-400" />
-                      Générer des documents
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <button 
-                        onClick={() => printDocument('liste')}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors border border-slate-200"
-                      >
-                        <Users className="w-4 h-4" />
-                        Liste d'appel
-                      </button>
-                      <button 
-                        onClick={() => printDocument('convocation')}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg font-medium transition-colors border border-emerald-200"
-                      >
-                        <FileText className="w-4 h-4" />
-                        Convocation
-                      </button>
-                      <button 
-                        onClick={() => printDocument('projet')}
-                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-medium transition-colors border border-indigo-200"
-                      >
-                        <FileText className="w-4 h-4" />
-                        Fiche Projet
-                      </button>
-                    </div>
+                <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 mb-6">
+                  <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                    <Printer className="w-4 h-4 text-slate-400" />
+                    Générer des documents
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <button 
+                      onClick={() => printDocument('liste')}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors border border-slate-200 cursor-pointer"
+                    >
+                      <Users className="w-4 h-4" />
+                      Liste d'appel
+                    </button>
+                    <button 
+                      onClick={() => printDocument('convocation')}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg font-medium transition-colors border border-emerald-200 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Convocation
+                    </button>
+                    <button 
+                      onClick={() => printDocument('projet')}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-medium transition-colors border border-indigo-200 cursor-pointer"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Fiche Projet
+                    </button>
                   </div>
-                  
-                  {/* Si séance par équipe : Affichage des équipes inscrites */}
-                  {selectedEvent.type === 'session' && (selectedEvent.raw as Session).isTeamRegistration && (
-                    <div className="mb-6">
-                      <h3 className="font-semibold text-slate-800 mb-3 flex items-center justify-between">
-                        <span className="flex items-center gap-2">
-                          <Users className="w-4 h-4 text-purple-600" />
-                          Équipes enregistrées ({((selectedEvent.raw as Session).teams || []).length})
-                        </span>
-                        <span className="text-xs bg-purple-100 text-purple-800 font-bold px-2.5 py-0.5 rounded-full border border-purple-200">
-                          {(selectedEvent.raw as Session).teamSize || 4} élèves / équipe
-                        </span>
-                      </h3>
+                </div>
+              )}
+              
+              {/* Si séance par équipe : Affichage des équipes inscrites (Visible public & enseignant) */}
+              {selectedEvent.type === 'session' && (selectedEvent.raw as Session).isTeamRegistration && (
+                <div className="mb-6">
+                  <h3 className="font-bold text-slate-800 mb-3 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-purple-600" />
+                      Équipes enregistrées ({((selectedEvent.raw as Session).teams || []).length})
+                    </span>
+                    <span className="text-xs bg-purple-100 text-purple-800 font-bold px-2.5 py-0.5 rounded-full border border-purple-200">
+                      {(selectedEvent.raw as Session).teamSize || 4} élèves / équipe
+                    </span>
+                  </h3>
 
-                      {((selectedEvent.raw as Session).teams || []).length === 0 ? (
-                        <p className="text-sm text-slate-500 italic p-4 bg-white rounded-xl border border-slate-200 text-center">
-                          Aucune équipe n'est encore inscrite pour cette séance.
-                        </p>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {((selectedEvent.raw as Session).teams || []).map((team, tIdx) => (
-                            <div key={team.id || tIdx} className="bg-white p-3.5 rounded-xl border border-purple-100 shadow-xs">
-                              <div className="flex items-center justify-between mb-2">
-                                <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                                  <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-xs flex items-center justify-center font-black">
-                                    {tIdx + 1}
+                  {((selectedEvent.raw as Session).teams || []).length === 0 ? (
+                    <p className="text-sm text-slate-500 italic p-4 bg-white rounded-xl border border-slate-200 text-center">
+                      Aucune équipe n'est encore inscrite pour cette séance.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {((selectedEvent.raw as Session).teams || []).map((team, tIdx) => (
+                        <div key={team.id || tIdx} className="bg-white p-3.5 rounded-xl border border-purple-100 shadow-xs">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-xs flex items-center justify-center font-black">
+                                {tIdx + 1}
+                              </span>
+                              <span>{team.name}</span>
+                            </h4>
+                            <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md">
+                              {team.studentIds?.length || 0} / {(selectedEvent.raw as Session).teamSize || 4} élèves
+                            </span>
+                          </div>
+                          <ul className="space-y-1 text-xs text-slate-600">
+                            {(team.studentIds || []).map(sid => {
+                              const st = effectiveStudents.find(s => s.id === sid);
+                              return (
+                                <li key={sid} className="flex items-center justify-between py-0.5 border-b border-slate-50 last:border-b-0">
+                                  <span className="font-semibold text-slate-800">
+                                    {st ? `${st.lastName} ${st.firstName}` : sid}
                                   </span>
-                                  <span>{team.name}</span>
-                                </h4>
-                                <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md">
-                                  {team.studentIds?.length || 0} / {(selectedEvent.raw as Session).teamSize || 4} élèves
-                                </span>
-                              </div>
-                              <ul className="space-y-1 text-xs text-slate-600">
-                                {(team.studentIds || []).map(sid => {
-                                  const st = students.find(s => s.id === sid);
-                                  return (
-                                    <li key={sid} className="flex items-center justify-between py-0.5 border-b border-slate-50 last:border-b-0">
-                                      <span className="font-medium text-slate-800">
-                                        {st ? `${st.lastName} ${st.firstName}` : sid}
-                                      </span>
-                                      {st?.classGroup && (
-                                        <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
-                                          {st.classGroup}
-                                        </span>
-                                      )}
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </div>
-                          ))}
+                                  {st?.classGroup && (
+                                    <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
+                                      {st.classGroup}
+                                    </span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
+                </div>
+              )}
 
-                  <div>
-                    <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-slate-400" />
-                      Tous les élèves inscrits ({selectedEvent.studentIds.length})
-                    </h3>
+              {/* Tous les élèves inscrits (Visible pour TOUS : enseignants et public) */}
+              {(() => {
+                const enrolled = getEnrolledStudents(selectedEvent.studentIds);
+                const maxCap = selectedEvent.type === 'session' ? (selectedEvent.raw as Session).maxParticipants : undefined;
+                return (
+                  <div className="mb-6">
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <h3 className="font-black text-slate-900 flex items-center gap-2 text-base">
+                        <Users className="w-4 h-4 text-indigo-600" />
+                        <span>Élèves inscrits sur le calendrier ({enrolled.length}{maxCap ? ` / ${maxCap} places` : ''})</span>
+                      </h3>
+                      {maxCap && (
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
+                          enrolled.length >= maxCap ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
+                        }`}>
+                          {enrolled.length >= maxCap ? 'Complet' : `${maxCap - enrolled.length} place(s) restante(s)`}
+                        </span>
+                      )}
+                    </div>
                     
-                    {selectedEvent.studentIds.length === 0 ? (
-                      <p className="text-sm text-slate-500 italic p-4 bg-white rounded-xl border border-slate-200 text-center">
-                        Aucun élève enregistré pour cet événement.
-                      </p>
+                    {enrolled.length === 0 ? (
+                      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 text-center space-y-1.5 shadow-xs">
+                        <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                        <p className="text-sm font-bold text-slate-700">Aucun élève encore inscrit</p>
+                        <p className="text-xs text-slate-400">
+                          {isPublic 
+                            ? "Soyez le premier à vous inscrire pour cette séance !" 
+                            : "Aucun participant enregistré pour le moment."}
+                        </p>
+                      </div>
                     ) : (
-                      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                        <table className="w-full text-left text-sm">
-                          <thead className="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                              <th className="px-4 py-3 font-semibold text-slate-600">Nom</th>
-                              <th className="px-4 py-3 font-semibold text-slate-600">Prénom</th>
-                              <th className="px-4 py-3 font-semibold text-slate-600">Classe</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {students
-                              .filter(s => selectedEvent.studentIds.includes(s.id))
-                              .sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''))
-                              .map(student => (
-                                <tr key={student.id} className="hover:bg-slate-50 transition-colors">
-                                  <td className="px-4 py-2.5 font-bold text-slate-900">{student.lastName}</td>
-                                  <td className="px-4 py-2.5 text-slate-600">{student.firstName}</td>
-                                  <td className="px-4 py-2.5 text-slate-600">
-                                    <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-semibold">
-                                      {student.classGroup}
-                                    </span>
+                      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                        <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 z-10">
+                              <tr>
+                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-10">#</th>
+                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider">Nom & Prénom</th>
+                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Classe</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {enrolled.map((st, idx) => (
+                                <tr key={st.id || idx} className="hover:bg-indigo-50/40 transition-colors">
+                                  <td className="px-4 py-2.5 text-xs font-bold text-slate-400">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <div className="font-black text-slate-900 flex items-center gap-1.5">
+                                      <span>{st.lastName || st.name}</span>
+                                      <span className="font-medium text-slate-600">{st.firstName}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right">
+                                    {st.classGroup ? (
+                                      <span className="bg-indigo-50 text-indigo-700 border border-indigo-200/80 px-2 py-0.5 rounded-md text-xs font-bold">
+                                        {st.classGroup}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-slate-400">-</span>
+                                    )}
                                   </td>
                                 </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     )}
                   </div>
-                </>
-              )}
+                );
+              })()}
               
-              {isPublic && (
-                <div className="text-center py-10">
-                  <CalendarIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                  <p className="text-slate-600 font-medium text-lg">Événement planifié</p>
-                  <p className="text-slate-500 text-sm mb-6">Plus d'informations auprès de l'équipe encadrante.</p>
-                  
-                  {(() => {
-                    const isSession = selectedEvent.type === 'session';
-                    const isConvocation = selectedEvent.type === 'convocation';
-                    
-                    let isClosed = false;
-                    let isFull = false;
-                    
-                    if (isSession) {
-                      const session = selectedEvent.raw as Session;
-                      isFull = session.maxParticipants !== undefined && (session.enrolledStudentIds || []).length >= session.maxParticipants;
-                      const isPast = new Date(selectedEvent.date).setHours(0,0,0,0) < new Date().setHours(0,0,0,0);
-                      isClosed = isFull || isPast;
-                    }
-                    
-                    if (isSession && !isClosed) {
-                      const sess = selectedEvent.raw as Session;
-                      if (sess.blockOnlineRegistration) {
-                        return (
-                          <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-950 text-sm max-w-md mx-auto text-center space-y-2 shadow-2xs">
-                            <div className="flex items-center justify-center gap-2 font-bold text-amber-900 text-base">
-                              <Lock className="w-5 h-5 text-amber-700" />
-                              <span>Inscription en ligne bloquée</span>
-                            </div>
-                            <p className="text-xs font-semibold text-amber-800 leading-relaxed">
-                              {sess.directRegistrationNotice || (sess.directRegistrationTeacherName
-                                ? `Voir l'inscription directement avec ${sess.directRegistrationTeacherName}.`
-                                : "Voir l'inscription directement avec l'enseignant responsable.")}
-                            </p>
-                          </div>
-                        );
-                      }
-                      return (
-                        <button 
-                          onClick={() => {
-                            setSelectedEvent(null);
-                            setEnrollingSession(sess);
-                          }}
-                          className={`inline-flex items-center gap-2 px-6 py-3 ${sess.isTeamRegistration ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-600/20' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'} text-white rounded-xl font-bold transition-colors shadow-sm cursor-pointer`}
-                        >
-                          <Users className="w-5 h-5" />
-                          {sess.isTeamRegistration ? `Inscrire une équipe (${sess.teamSize || 4} élèves)` : "Je m'inscris à cette séance"}
-                        </button>
-                      );
-                    }
-                    
-                    if (isConvocation) {
-                      return (
-                        <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-900 text-sm max-w-md mx-auto">
-                          <p className="font-bold mb-1">Rencontre / Compétition UNSS</p>
-                          <p className="text-xs text-indigo-700 leading-relaxed">
-                            Événement sur convocation nominative. Les convocations et listings officiels sont transmis directement par l'enseignant responsable.
-                          </p>
+              {/* Actions d'inscription et informations pour le public */}
+              {isPublic && (() => {
+                const isSession = selectedEvent.type === 'session';
+                const isConvocation = selectedEvent.type === 'convocation';
+                
+                let isClosed = false;
+                let isFull = false;
+                
+                if (isSession) {
+                  const session = selectedEvent.raw as Session;
+                  isFull = session.maxParticipants !== undefined && (session.enrolledStudentIds || []).length >= session.maxParticipants;
+                  const isPast = new Date(selectedEvent.date).setHours(0,0,0,0) < new Date().setHours(0,0,0,0);
+                  isClosed = isFull || isPast;
+                }
+                
+                if (isSession && !isClosed) {
+                  const sess = selectedEvent.raw as Session;
+                  if (sess.blockOnlineRegistration) {
+                    return (
+                      <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl text-amber-950 text-sm text-center space-y-2 shadow-2xs mt-4">
+                        <div className="flex items-center justify-center gap-2 font-bold text-amber-900 text-base">
+                          <Lock className="w-5 h-5 text-amber-700" />
+                          <span>Inscription en ligne bloquée</span>
                         </div>
-                      );
-                    }
+                        <p className="text-xs font-semibold text-amber-800 leading-relaxed">
+                          {sess.directRegistrationNotice || (sess.directRegistrationTeacherName
+                            ? `Voir l'inscription directement avec ${sess.directRegistrationTeacherName}.`
+                            : "Voir l'inscription directement avec l'enseignant responsable.")}
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="mt-4 pt-4 border-t border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                      <div>
+                        <h4 className="text-sm font-black text-slate-900">Participer à ce créneau ?</h4>
+                        <p className="text-xs text-slate-500">Inscrivez-vous en quelques clics avec votre nom ou prénom.</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setSelectedEvent(null);
+                          setEnrollingSession(sess);
+                        }}
+                        className={`w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 ${sess.isTeamRegistration ? 'bg-purple-600 hover:bg-purple-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white rounded-xl font-black text-sm transition-all shadow-md active:scale-95 cursor-pointer`}
+                      >
+                        <Users className="w-4 h-4" />
+                        <span>{sess.isTeamRegistration ? `Inscrire une équipe (${sess.teamSize || 4} élèves)` : "Je m'inscris à cette séance"}</span>
+                      </button>
+                    </div>
+                  );
+                }
+                
+                if (isConvocation) {
+                  return (
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-950 text-sm mt-4">
+                      <p className="font-bold mb-1 flex items-center gap-1.5">
+                        <CalendarIcon className="w-4 h-4 text-emerald-700" />
+                        <span>Rencontre / Compétition UNSS</span>
+                      </p>
+                      <p className="text-xs text-emerald-800 leading-relaxed">
+                        Événement sur convocation officielle. Les élèves convoqués sont listés ci-dessus.
+                      </p>
+                    </div>
+                  );
+                }
 
-                    if (isSession && isClosed) {
-                      return (
-                        <div className="p-4 bg-slate-100 border border-slate-200 rounded-xl text-slate-700 text-sm max-w-md mx-auto font-medium">
-                          {isFull 
-                            ? "Les inscriptions en ligne sont closes (séance complète)." 
-                            : "Les inscriptions en ligne pour cette séance sont closes."}
-                        </div>
-                      );
-                    }
-                    
-                    return null;
-                  })()}
-                </div>
-              )}
+                if (isSession && isClosed) {
+                  return (
+                    <div className="p-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-700 text-xs text-center font-bold mt-4">
+                      {isFull 
+                        ? "Les inscriptions en ligne sont closes (séance complète)." 
+                        : "Les inscriptions en ligne pour cette séance sont closes (séance passée)."}
+                    </div>
+                  );
+                }
+                
+                return null;
+              })()}
             </div>
             
             <div className="p-4 border-t border-slate-100 flex justify-between items-center shrink-0 bg-white">

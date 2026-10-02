@@ -244,7 +244,7 @@ export default function App() {
   }, []);
 
   const fetchStudents = useCallback(async () => {
-    if (!isAuthenticated && !isPublicTeacher) {
+    if (!isAuthenticated && !isPublicTeacher && !isPublicCalendar) {
       setLoading(false);
       return;
     }
@@ -267,7 +267,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, isPublicTeacher]);
+  }, [isAuthenticated, isPublicTeacher, isPublicCalendar]);
 
   useEffect(() => {
     fetchStudents();

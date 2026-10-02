@@ -221,6 +221,11 @@ export function saveLocalSession(session: Partial<Session>): Session {
   const idx = all.findIndex(s => s.id === id);
   const existing = idx >= 0 ? all[idx] : null;
 
+  // Si la session n'est pas encore en local et qu'il s'agit d'une mise à jour partielle sans nom ni date, ne pas créer de stub vide
+  if (!existing && (!session.name || !session.date)) {
+    return (session as Session);
+  }
+
   const mergedSession: Session = {
     id,
     name: session.name !== undefined ? session.name : (existing?.name || ''),
@@ -296,6 +301,11 @@ export function saveLocalConvocation(conv: Partial<Convocation>): Convocation {
   const id = conv.id || (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : ('cnv_' + Math.random().toString(36).slice(2, 9)));
   const idx = all.findIndex(c => c.id === id);
   const existing = idx >= 0 ? all[idx] : null;
+
+  // Si la convocation n'est pas encore en local et qu'il s'agit d'une mise à jour partielle, ne pas créer de stub vide
+  if (!existing && (!conv.competitionName || !conv.departureDate)) {
+    return (conv as Convocation);
+  }
 
   const merged: Convocation = {
     id,
