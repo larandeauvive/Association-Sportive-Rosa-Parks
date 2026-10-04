@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Student, Session, AttachedPdfDoc } from '../types';
+import { startOfWeek, endOfWeek, addWeeks, addDays, format } from 'date-fns';
 import { 
   PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, 
   Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
@@ -116,6 +117,20 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }, []);
+
+  // Afficher l'AS du Soir au-delà de la semaine suivante (replié par défaut)
+  const [showLaterAsSoir, setShowLaterAsSoir] = useState(false);
+
+  // Horizon d'une semaine à l'autre pour l'AS du Soir (semaine en cours et semaine suivante)
+  const asSoirHorizonDate = useMemo(() => {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const baseWeekStart = (dayOfWeek === 0 || dayOfWeek === 6)
+      ? startOfWeek(addDays(now, 2), { weekStartsOn: 1 })
+      : startOfWeek(now, { weekStartsOn: 1 });
+    return endOfWeek(addWeeks(baseWeekStart, 1), { weekStartsOn: 1 });
+  }, []);
+  const asSoirHorizonStr = useMemo(() => format(asSoirHorizonDate, 'yyyy-MM-dd'), [asSoirHorizonDate]);
   
   const [isCreating, setIsCreating] = useState(false);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -620,7 +635,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
   // Colonne 1 : AS du Soir (Mardi ou Jeudi, 17h00 - 18h00, récurrents)
   // Colonne 2 : Mercredi (Créneaux ponctuels, compétitions, tournois, sorties)
   const { 
-    asSoirUpcoming, asSoirPast, 
+    asSoirUpcoming, asSoirUpcomingImmediate, asSoirUpcomingLater, asSoirPast, 
     mercrediUpcoming, mercrediPast,
     totalAsSoir, totalMercredi 
   } = useMemo(() => {
@@ -640,7 +655,8 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
       return (a.time || '').localeCompare(b.time || '');
     });
 
-    const soirUp: Session[] = [];
+    const soirUpImmediate: Session[] = [];
+    const soirUpLater: Session[] = [];
     const soirPast: Session[] = [];
     const merUp: Session[] = [];
     const merPast: Session[] = [];
@@ -650,23 +666,35 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
       const isUpcoming = (s.date || '') >= todayStr;
 
       if (cat === 'as_soir') {
-        if (isUpcoming) soirUp.push(s);
-        else soirPast.push(s);
+        if (isUpcoming) {
+          // Filtrage d'une semaine à l'autre pour ne pas saturer l'affichage
+          if ((s.date || '') <= asSoirHorizonStr) {
+            soirUpImmediate.push(s);
+          } else {
+            soirUpLater.push(s);
+          }
+        } else {
+          soirPast.push(s);
+        }
       } else {
         if (isUpcoming) merUp.push(s);
         else merPast.push(s);
       }
     });
 
+    const soirUp = showLaterAsSoir ? [...soirUpImmediate, ...soirUpLater] : soirUpImmediate;
+
     return {
       asSoirUpcoming: soirUp,
+      asSoirUpcomingImmediate: soirUpImmediate,
+      asSoirUpcomingLater: soirUpLater,
       asSoirPast: soirPast,
       mercrediUpcoming: merUp,
       mercrediPast: merPast,
-      totalAsSoir: soirUp.length + soirPast.length,
+      totalAsSoir: soirUpImmediate.length + soirUpLater.length + soirPast.length,
       totalMercredi: merUp.length + merPast.length
     };
-  }, [sessions, sessionSearch, todayStr]);
+  }, [sessions, sessionSearch, todayStr, asSoirHorizonStr, showLaterAsSoir]);
 
   const displayedAsSoirPast = useMemo(() => {
     if (pastSortOrder === 'desc') return [...asSoirPast].reverse();
@@ -893,6 +921,9 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                       <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-800 font-bold border border-purple-200">
                         {totalAsSoir}
                       </span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200" title="Affichage limité d'une semaine à l'autre pour ne pas surcharger le calendrier">
+                        D'une semaine à l'autre
+                      </span>
                     </h3>
                     <p className="text-[10px] font-semibold text-purple-700">
                       Mardi ou Jeudi (17h00 - 18h00) • Récurrents
@@ -918,6 +949,11 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                       <span className="w-2 h-2 rounded-full bg-purple-600 inline-block animate-pulse"></span>
                       À venir ({asSoirUpcoming.length})
                     </span>
+                    {!showLaterAsSoir && (
+                      <span className="text-[10px] font-medium text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                        Semaine en cours & suivante
+                      </span>
+                    )}
                   </div>
 
                   {asSoirUpcoming.map(s => renderSessionCard(s, false))}
@@ -925,6 +961,45 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                   {asSoirUpcoming.length === 0 && (
                     <div className="p-3 text-center text-xs text-purple-800/60 bg-purple-50/40 rounded-lg border border-dashed border-purple-200">
                       Aucun créneau du soir programmé.
+                    </div>
+                  )}
+
+                  {/* Semaines ultérieures masquées par défaut pour ne pas surcharger */}
+                  {asSoirUpcomingLater.length > 0 && !showLaterAsSoir && (
+                    <div className="pt-2 border-t border-purple-100">
+                      <button
+                        type="button"
+                        onClick={() => setShowLaterAsSoir(true)}
+                        className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-50/70 hover:bg-purple-100 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                          <span>Semaines suivantes ({asSoirUpcomingLater.length} masquées)</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-purple-700">
+                          <span>Afficher tout</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
+                    </div>
+                  )}
+
+                  {showLaterAsSoir && asSoirUpcomingLater.length > 0 && (
+                    <div className="pt-2 border-t border-purple-100">
+                      <button
+                        type="button"
+                        onClick={() => setShowLaterAsSoir(false)}
+                        className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-100/70 hover:bg-purple-200/70 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                          <span>Semaines suivantes ({asSoirUpcomingLater.length} affichées)</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] text-purple-700">
+                          <span>Replier (d'une semaine à l'autre)</span>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </div>
+                      </button>
                     </div>
                   )}
                 </div>

@@ -15,7 +15,8 @@ import {
   ChevronLeft, ChevronRight, X, Printer, Users, FileText, 
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
   Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock,
-  ArrowRight, CheckCircle2, AlertCircle, Compass, CalendarDays, Zap, Flame, Check
+  ArrowRight, CheckCircle2, AlertCircle, Compass, CalendarDays, Zap, Flame, Check,
+  Layers, Moon, History, ChevronDown, Repeat, Timer, Search
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -23,6 +24,7 @@ import { SimplifiedEnrollmentModal } from './SimplifiedEnrollmentModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { downloadRegistrationForm, formatFileSize } from '../lib/registrationFormHelper';
 import { getStudentCategory } from '../lib/categoryUtils';
+import { getSessionCategory, getSessionDayName, formatRegistrationRule, getSeriesSessions } from '../lib/sessionUtils';
 
 interface Props {
   students: Student[];
@@ -107,9 +109,18 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }).sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
   }, [effectiveStudents]);
 
-  // Mode d'affichage : 'focus' (Focus 15 jours : cette semaine & semaine à venir), 'agenda' (Planning complet), 'month' (Grille mensuelle)
-  // Sur smartphone ou sur lien public partagé, privilégie immédiatement le focus sur les événements de la semaine et de la semaine à venir
-  const [viewMode, setViewMode] = useState<'focus' | 'agenda' | 'month'>('focus');
+  // Mode d'affichage : 'columns' (2 Colonnes : AS du Soir & Mercredi), 'focus' (Focus 15 jours : cette semaine & semaine à venir), 'agenda' (Planning complet), 'month' (Grille mensuelle)
+  // Sur le lien public partagé comme en interne, affiche immédiatement les 2 colonnes comme demandé par l'utilisateur
+  const [viewMode, setViewMode] = useState<'columns' | 'focus' | 'agenda' | 'month'>('columns');
+
+  // Sous-catégorie pour le mode 2 Colonnes : 'all' (2 colonnes côte à côte), 'as_soir' (AS du Soir seul), 'mercredi' (Mercredi seul)
+  const [columnCategory, setColumnCategory] = useState<'all' | 'as_soir' | 'mercredi'>('all');
+  const [calendarSearch, setCalendarSearch] = useState('');
+  const [isAsSoirHistoryOpen, setIsAsSoirHistoryOpen] = useState(false);
+  const [isMercrediHistoryOpen, setIsMercrediHistoryOpen] = useState(false);
+  // Afficher l'AS du Soir d'une semaine à l'autre (false par défaut) pour ne pas surcharger le calendrier
+  const [showAllAsSoir, setShowAllAsSoir] = useState(false);
+  const [showLaterAsSoir, setShowLaterAsSoir] = useState(false);
 
   // Sous-filtre pour le mode Focus : 'all' (15 jours), 'thisWeek' (Cette semaine uniquement), 'nextWeek' (Semaine prochaine uniquement)
   const [focusFilter, setFocusFilter] = useState<'all' | 'thisWeek' | 'nextWeek'>('all');
@@ -160,12 +171,49 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [newEventDirectRegistrationTeacherName, setNewEventDirectRegistrationTeacherName] = useState('');
   const [newEventDirectRegistrationNotice, setNewEventDirectRegistrationNotice] = useState('');
 
-  // Repères temporels pour le Focus hebdomadaire
+  // Repères temporels pour le Focus hebdomadaire et la limitation d'une semaine à l'autre
   const today = useMemo(() => startOfDay(new Date()), []);
+  const todayStr = useMemo(() => format(today, 'yyyy-MM-dd'), [today]);
   const currentWeekStart = useMemo(() => startOfWeek(today, { weekStartsOn: 1 }), [today]);
   const currentWeekEnd = useMemo(() => endOfWeek(today, { weekStartsOn: 1 }), [today]);
   const nextWeekStart = useMemo(() => startOfWeek(addWeeks(today, 1), { weekStartsOn: 1 }), [today]);
   const nextWeekEnd = useMemo(() => endOfWeek(addWeeks(today, 1), { weekStartsOn: 1 }), [today]);
+  // Horizon d'une semaine à l'autre : couvre la semaine en cours et la semaine suivante (week-end inclus)
+  const asSoirHorizonDate = useMemo(() => {
+    const dayOfWeek = today.getDay();
+    const baseWeekStart = (dayOfWeek === 0 || dayOfWeek === 6)
+      ? startOfWeek(addDays(today, 2), { weekStartsOn: 1 })
+      : startOfWeek(today, { weekStartsOn: 1 });
+    return endOfWeek(addWeeks(baseWeekStart, 1), { weekStartsOn: 1 });
+  }, [today]);
+  const asSoirHorizonStr = useMemo(() => format(asSoirHorizonDate, 'yyyy-MM-dd'), [asSoirHorizonDate]);
+
+  // Catégorisation des événements :
+  // - 'as_soir' : Mardi ou Jeudi (créneaux récurrents 17h00 - 18h00)
+  // - 'mercredi' : Séances du mercredi, compétitions UNSS, sorties
+  const getEventCategory = useCallback((ev: CalendarEvent): 'as_soir' | 'mercredi' => {
+    if (ev.type === 'session') {
+      return getSessionCategory(ev.raw as Session);
+    }
+    const conv = ev.raw as Convocation;
+    const d = (conv.departureDate || ev.date || '').slice(0, 10);
+    const parts = d.split('-');
+    if (parts.length === 3) {
+      const day = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)).getDay();
+      if (day === 2 || day === 4) return 'as_soir';
+    }
+    return 'mercredi';
+  }, []);
+
+  // Filtrage d'une semaine à l'autre pour l'AS du Soir afin de ne pas surcharger le calendrier
+  const isEventVisibleInCalendar = useCallback((ev: CalendarEvent): boolean => {
+    if (showAllAsSoir) return true;
+    const cat = getEventCategory(ev);
+    if (cat !== 'as_soir') return true;
+    const evDate = (ev.date || '').slice(0, 10);
+    if (evDate < todayStr) return true; // les séances passées restent archivées dans l'historique
+    return evDate <= asSoirHorizonStr; // à venir : uniquement semaine en cours & semaine suivante
+  }, [showAllAsSoir, getEventCategory, todayStr, asSoirHorizonStr]);
 
   // Événements de la semaine en cours (Lundi à Dimanche)
   const thisWeekEvents = useMemo(() => {
@@ -267,10 +315,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   }, [today]);
 
   // Événements du mois affiché, triés chronologiquement pour le mode planning/mobile
+  // Filtrés d'une semaine à l'autre pour l'AS du Soir afin de ne pas saturer le calendrier
   const currentMonthEvents = useMemo(() => {
     return events
       .filter(e => {
         if (!e.date) return false;
+        if (!isEventVisibleInCalendar(e)) return false;
         const d = new Date(e.date);
         return isSameMonth(d, currentMonth);
       })
@@ -281,18 +331,20 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
         return (timeA || '').localeCompare(timeB || '');
       });
-  }, [events, currentMonth]);
+  }, [events, currentMonth, isEventVisibleInCalendar]);
 
-  // Tous les événements triés chronologiquement
+  // Tous les événements triés chronologiquement pour la vue agenda
   const sortedAllEvents = useMemo(() => {
-    return [...events].filter(e => e.date).sort((a, b) => {
-      const dDiff = a.date.localeCompare(b.date);
-      if (dDiff !== 0) return dDiff;
-      const timeA = a.type === 'session' ? (a.raw as Session).time : (a.raw as Convocation).departureDate?.includes('T') ? (a.raw as Convocation).departureDate.split('T')[1] : '';
-      const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
-      return (timeA || '').localeCompare(timeB || '');
-    });
-  }, [events]);
+    return [...events]
+      .filter(e => e.date && isEventVisibleInCalendar(e))
+      .sort((a, b) => {
+        const dDiff = a.date.localeCompare(b.date);
+        if (dDiff !== 0) return dDiff;
+        const timeA = a.type === 'session' ? (a.raw as Session).time : (a.raw as Convocation).departureDate?.includes('T') ? (a.raw as Convocation).departureDate.split('T')[1] : '';
+        const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
+        return (timeA || '').localeCompare(timeB || '');
+      });
+  }, [events, isEventVisibleInCalendar]);
 
   // Événement le plus proche / pertinent pour saut rapide
   const nearestEvent = useMemo(() => {
@@ -300,12 +352,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     const upcoming = events
-      .filter(e => e.date && new Date(e.date) >= now)
+      .filter(e => e.date && new Date(e.date) >= now && isEventVisibleInCalendar(e))
       .sort((a, b) => a.date.localeCompare(b.date));
     if (upcoming.length > 0) return upcoming[0];
-    const sorted = [...events].filter(e => e.date).sort((a, b) => a.date.localeCompare(b.date));
+    const sorted = [...events].filter(e => e.date && isEventVisibleInCalendar(e)).sort((a, b) => a.date.localeCompare(b.date));
     return sorted[0] || null;
-  }, [events]);
+  }, [events, isEventVisibleInCalendar]);
 
   // Groupement par mois pour le mode planning (YYYY-MM)
   const agendaMonthGroups = useMemo(() => {
@@ -319,6 +371,75 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
   }, [agendaScope, currentMonthEvents, sortedAllEvents]);
+
+  const {
+    asSoirUpcoming,
+    asSoirUpcomingImmediate,
+    asSoirUpcomingLater,
+    asSoirPast,
+    mercrediUpcoming,
+    mercrediPast,
+    totalAsSoir,
+    totalMercredi
+  } = useMemo(() => {
+    const q = calendarSearch.trim().toLowerCase();
+    const filtered = q
+      ? events.filter(e => 
+          (e.title || '').toLowerCase().includes(q) ||
+          (e.date || '').toLowerCase().includes(q) ||
+          (e.type === 'session' && ((e.raw as Session).location || '').toLowerCase().includes(q))
+        )
+      : events;
+
+    const sorted = [...filtered].sort((a, b) => {
+      const dDiff = (a.date || '').localeCompare(b.date || '');
+      if (dDiff !== 0) return dDiff;
+      const timeA = a.type === 'session' ? ((a.raw as Session).time || '') : '';
+      const timeB = b.type === 'session' ? ((b.raw as Session).time || '') : '';
+      return timeA.localeCompare(timeB);
+    });
+
+    const nowStr = format(today, 'yyyy-MM-dd');
+    const soirUpImmediate: CalendarEvent[] = [];
+    const soirUpLater: CalendarEvent[] = [];
+    const soirPast: CalendarEvent[] = [];
+    const merUp: CalendarEvent[] = [];
+    const merPast: CalendarEvent[] = [];
+
+    sorted.forEach(ev => {
+      const cat = getEventCategory(ev);
+      const evDate = (ev.date || '').slice(0, 10);
+      const isUpcoming = evDate >= nowStr;
+      if (cat === 'as_soir') {
+        if (isUpcoming) {
+          // Filtrage d'une semaine à l'autre pour ne pas surcharger le calendrier
+          if (evDate <= asSoirHorizonStr) {
+            soirUpImmediate.push(ev);
+          } else {
+            soirUpLater.push(ev);
+          }
+        } else {
+          soirPast.push(ev);
+        }
+      } else {
+        if (isUpcoming) merUp.push(ev);
+        else merPast.push(ev);
+      }
+    });
+
+    const soirUp = (showAllAsSoir || showLaterAsSoir) ? [...soirUpImmediate, ...soirUpLater] : soirUpImmediate;
+
+    return {
+      asSoirUpcoming: soirUp,
+      asSoirUpcomingImmediate: soirUpImmediate,
+      asSoirUpcomingLater: soirUpLater,
+      asSoirPast: soirPast,
+      mercrediUpcoming: merUp,
+      mercrediPast: merPast,
+      totalAsSoir: soirUpImmediate.length + soirUpLater.length + soirPast.length,
+      totalMercredi: merUp.length + merPast.length
+    };
+  }, [events, calendarSearch, today, getEventCategory, asSoirHorizonStr, showAllAsSoir, showLaterAsSoir]);
 
   const openEditModal = (event: CalendarEvent) => {
     if (event.type !== 'session') return;
@@ -816,6 +937,205 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     alert('Lien du calendrier public copié dans le presse-papiers !');
   };
 
+  const renderColumnEventCard = (event: CalendarEvent, isPast = false) => {
+    const isSession = event.type === 'session';
+    const rawSession = isSession ? (event.raw as Session) : null;
+    const rawConv = !isSession ? (event.raw as Convocation) : null;
+    const cleanDateStr = event.date.slice(0, 10);
+    const eventDateObj = new Date(`${cleanDateStr}T12:00:00`);
+    const dayName = getSessionDayName(cleanDateStr);
+    const isFull = rawSession?.maxParticipants !== undefined && ((rawSession.enrolledStudentIds || []).length >= rawSession.maxParticipants);
+    const enrolledCount = event.studentIds.length;
+    const maxCap = rawSession?.maxParticipants;
+    const rel = getEventRelativeBadge(event.date);
+    const cat = getEventCategory(event);
+    const isSoir = cat === 'as_soir';
+    const series = isSession ? getSeriesSessions(rawSession!, events.filter(e => e.type === 'session').map(e => e.raw as Session)) : [];
+    const isSeries = series.length > 1;
+    const deadlineText = isSession ? formatRegistrationRule(rawSession!) : '';
+
+    return (
+      <div
+        key={event.id}
+        onClick={() => setSelectedEvent(event)}
+        className={`group rounded-2xl border-2 transition-all p-3.5 sm:p-4 shadow-xs hover:shadow-md cursor-pointer flex flex-col justify-between gap-3 ${
+          rel.isToday
+            ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-400/30'
+            : isPast
+            ? 'bg-slate-50/70 border-slate-200/80 hover:bg-slate-100/70'
+            : isSoir
+            ? 'border-purple-200 bg-white hover:border-purple-400 hover:bg-purple-50/20'
+            : 'border-blue-200 bg-white hover:border-blue-400 hover:bg-blue-50/20'
+        }`}
+      >
+        <div className="space-y-2">
+          {/* Ligne 1 : Badges et Catégorie */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {isSoir ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200 flex items-center gap-1 shadow-2xs">
+                  <Moon className="w-3 h-3 text-purple-600" /> {dayName || 'Soir'}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200 flex items-center gap-1 shadow-2xs">
+                  <Zap className="w-3 h-3 text-blue-600" /> Mercredi
+                </span>
+              )}
+
+              {isSeries && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 flex items-center gap-0.5 border border-slate-200">
+                  <Repeat className="w-2.5 h-2.5 text-slate-500" /> Récurrent
+                </span>
+              )}
+
+              {rel.isToday && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500 text-white shadow-xs animate-pulse">
+                  Aujourd'hui
+                </span>
+              )}
+
+              {isPast && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600">
+                  Passée
+                </span>
+              )}
+
+              {isFull && !isPast && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                  Complet
+                </span>
+              )}
+
+              {rawSession?.blockOnlineRegistration && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
+                  <Lock className="w-2.5 h-2.5 text-amber-700" />
+                  <span>{rawSession.directRegistrationTeacherName ? `Voir ${rawSession.directRegistrationTeacherName}` : 'Direct prof'}</span>
+                </span>
+              )}
+
+              {rawSession?.attachedPdf && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200 flex items-center gap-0.5">
+                  <FileText className="w-2.5 h-2.5 text-rose-600" /> PDF joint
+                </span>
+              )}
+            </div>
+
+            {/* Places / Inscrits */}
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${
+              isPast ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-white text-slate-800 border-slate-200 shadow-2xs'
+            }`}>
+              👥 {enrolledCount} {maxCap ? `/ ${maxCap}` : 'inscrits'}
+            </span>
+          </div>
+
+          {/* Titre */}
+          <h3 className={`text-base font-black leading-snug group-hover:text-indigo-600 transition-colors ${
+            isPast ? 'text-slate-700' : isSoir ? 'text-purple-950' : 'text-blue-950'
+          }`}>
+            {event.title}
+          </h3>
+
+          {/* Date & Horaires */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 font-semibold">
+            <span className="font-bold text-slate-800">
+              {format(eventDateObj, 'EEEE d MMMM yyyy', { locale: fr })}
+            </span>
+            <span>•</span>
+            <span className="font-bold text-indigo-700 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-indigo-500" />
+              {isSession 
+                ? `${rawSession?.time || ''}${rawSession?.endTime ? ` - ${rawSession.endTime}` : ''}`
+                : (rawConv?.departureDate?.includes('T') ? rawConv.departureDate.split('T')[1] : '')}
+            </span>
+            {(rawSession?.location || rawConv?.meetingLocation || rawConv?.guides) && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1 text-slate-600 truncate max-w-[220px]">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate">{rawSession?.location || rawConv?.meetingLocation || rawConv?.guides}</span>
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Règle d'inscription */}
+          {deadlineText && deadlineText !== 'Inscriptions sans date limite' && (
+            <div className="text-[11px] text-indigo-800 font-medium flex items-center gap-1">
+              <Timer className="w-3 h-3 text-indigo-500 shrink-0" />
+              <span className="truncate">{deadlineText}</span>
+            </div>
+          )}
+
+          {/* Description si présente */}
+          {rawSession?.description && (
+            <p className="text-xs text-slate-500 line-clamp-1 font-normal">
+              {rawSession.description}
+            </p>
+          )}
+        </div>
+
+        {/* Barre d'action */}
+        <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5">
+            {rawSession?.attachedPdf && (
+              <button
+                type="button"
+                onClick={() => {
+                  const link = document.createElement('a');
+                  link.href = rawSession.attachedPdf!.fileData;
+                  link.download = rawSession.attachedPdf!.fileName || 'document.pdf';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                title={`Télécharger ${rawSession.attachedPdf.fileName}`}
+              >
+                <Download className="w-3 h-3 text-rose-600" />
+                <span>PDF Infos</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setSelectedEvent(event)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+            >
+              Fiche & Inscrits
+            </button>
+          </div>
+
+          <div>
+            {!isPast && !isFull && isSession && !rawSession?.blockOnlineRegistration && (
+              <button
+                type="button"
+                onClick={() => setEnrollingSession(rawSession)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 rounded-lg shadow-xs transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>S'inscrire</span>
+              </button>
+            )}
+            {!isPast && isSession && rawSession?.blockOnlineRegistration && (
+              <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                Inscription directe prof
+              </span>
+            )}
+            {!isPast && !isSession && (
+              <button
+                type="button"
+                onClick={() => setSelectedEvent(event)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+              >
+                Convocation UNSS
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderFocusEventCard = (event: CalendarEvent) => {
     const isSession = event.type === 'session';
     const rawSession = isSession ? (event.raw as Session) : null;
@@ -1133,11 +1453,15 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 border ${
-              viewMode === 'focus' 
+              viewMode === 'columns'
+                ? 'bg-purple-600 text-white border-purple-700 shadow-sm'
+                : viewMode === 'focus' 
                 ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm' 
                 : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
             }`}>
-              {viewMode === 'focus' ? (
+              {viewMode === 'columns' ? (
+                <Layers className="w-5 h-5 sm:w-6 sm:h-6 text-purple-100" />
+              ) : viewMode === 'focus' ? (
                 <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
               ) : (
                 <CalendarIcon className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1145,14 +1469,18 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             </div>
             <div className="min-w-0">
               <h2 className="text-lg sm:text-2xl font-black text-slate-900 tracking-tight truncate">
-                {viewMode === 'focus' 
+                {viewMode === 'columns'
+                  ? "Créneaux d'Activités & Compétitions"
+                  : viewMode === 'focus' 
                   ? "Focus semaine & à venir" 
                   : viewMode === 'agenda' 
                   ? "Planning complet de la saison" 
                   : format(currentMonth, 'MMMM yyyy', { locale: fr })}
               </h2>
               <p className="text-xs sm:text-sm font-semibold text-slate-500 truncate">
-                {viewMode === 'focus'
+                {viewMode === 'columns'
+                  ? "AS du Soir (Mardi & Jeudi) & Séances du Mercredi"
+                  : viewMode === 'focus'
                   ? `Du ${format(currentWeekStart, 'd MMMM', { locale: fr })} au ${format(nextWeekEnd, 'd MMMM yyyy', { locale: fr })}`
                   : isPublic 
                   ? "Séances & compétitions — AS Lycée Rosa Parks" 
@@ -1205,16 +1533,26 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 <span>{twoWeeksEventsCount} événement{twoWeeksEventsCount > 1 ? 's' : ''} sur 15j</span>
               </span>
             </div>
+          ) : viewMode === 'columns' ? (
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-800 font-bold text-xs rounded-xl border border-purple-200">
+                <Moon className="w-3.5 h-3.5 text-purple-600" />
+                <span>AS du Soir ({totalAsSoir})</span>
+                <span className="text-slate-300">•</span>
+                <Zap className="w-3.5 h-3.5 text-blue-600" />
+                <span>Mercredi ({totalMercredi})</span>
+              </span>
+            </div>
           ) : (
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => setViewMode('focus')}
+                onClick={() => setViewMode('columns')}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-200 transition-all cursor-pointer shadow-2xs"
               >
-                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="hidden sm:inline">Revenir au Focus</span>
-                <span className="sm:hidden">Focus</span>
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="hidden sm:inline">Vue 2 Colonnes</span>
+                <span className="sm:hidden">2 Colonnes</span>
               </button>
             </div>
           )}
@@ -1224,7 +1562,18 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
           {/* Sélecteur de vue tactile pour smartphone & mode planning */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={() => setViewMode('columns')}
+                className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                  viewMode === 'columns' ? 'bg-indigo-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Affichage en 2 colonnes : AS du Soir et Séances Mercredi"
+              >
+                <Layers className="w-4 h-4" />
+                <span>2 Colonnes ({events.length})</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setViewMode('focus')}
@@ -1240,7 +1589,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 type="button"
                 onClick={() => setViewMode('agenda')}
                 className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'agenda' ? 'bg-white text-indigo-700 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  viewMode === 'agenda' ? 'bg-indigo-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Users className="w-4 h-4" />
@@ -1250,7 +1599,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 type="button"
                 onClick={() => setViewMode('month')}
                 className={`px-3 sm:px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  viewMode === 'month' ? 'bg-white text-indigo-700 shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  viewMode === 'month' ? 'bg-indigo-600 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <CalendarIcon className="w-4 h-4" />
@@ -1279,6 +1628,22 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                   Ce mois ({currentMonthEvents.length})
                 </button>
               </div>
+            )}
+            {viewMode !== 'columns' && (
+              <button
+                type="button"
+                onClick={() => setShowAllAsSoir(!showAllAsSoir)}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                  showAllAsSoir 
+                    ? 'bg-purple-100 text-purple-900 border-purple-300' 
+                    : 'bg-white text-slate-700 hover:bg-slate-50 border-slate-200 shadow-2xs'
+                }`}
+                title={showAllAsSoir ? "Afficher tous les créneaux AS du Soir de l'année" : "Limité d'une semaine à l'autre pour ne pas encombrer le calendrier"}
+              >
+                <Moon className="w-3.5 h-3.5 text-purple-600" />
+                <span className="hidden md:inline">AS du Soir :</span>
+                <span>{showAllAsSoir ? 'Tout afficher' : '1-2 semaines'}</span>
+              </button>
             )}
           </div>
 
@@ -1403,8 +1768,285 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         </div>
       )}
 
-      {/* VUE 0 : FOCUS SEMAINE & SEMAINE À VENIR */}
-      {viewMode === 'focus' ? (
+      {/* VUE 1 : AFFICHAGE EN 2 COLONNES (AS DU SOIR & MERCREDI) */}
+      {viewMode === 'columns' ? (
+        <div className="space-y-4 sm:space-y-6 mb-6 animate-in fade-in duration-150">
+          {/* Barre d'outils et sélecteur de colonne */}
+          <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            {/* Sélecteur de colonnes */}
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setColumnCategory('all')}
+                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  columnCategory === 'all'
+                    ? 'bg-white text-slate-900 shadow-xs font-black'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                <span>2 Colonnes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setColumnCategory('as_soir')}
+                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  columnCategory === 'as_soir'
+                    ? 'bg-purple-600 text-white shadow-xs font-black'
+                    : 'text-purple-800 hover:bg-purple-50'
+                }`}
+              >
+                <Moon className="w-3.5 h-3.5 text-purple-300" />
+                <span>AS du Soir ({totalAsSoir})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setColumnCategory('mercredi')}
+                className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  columnCategory === 'mercredi'
+                    ? 'bg-blue-600 text-white shadow-xs font-black'
+                    : 'text-blue-800 hover:bg-blue-50'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5 text-blue-300" />
+                <span>Mercredi ({totalMercredi})</span>
+              </button>
+            </div>
+
+            {/* Recherche et bascule AS du Soir */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Rechercher un créneau, un sport, un lieu, une date..."
+                  value={calendarSearch}
+                  onChange={e => setCalendarSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAllAsSoir(!showAllAsSoir)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-1.5 cursor-pointer shrink-0 ${
+                  showAllAsSoir 
+                    ? 'bg-purple-100 text-purple-900 border-purple-300' 
+                    : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200'
+                }`}
+                title={showAllAsSoir ? "Affichage de tous les créneaux AS du soir de la saison" : "Affichage limité d'une semaine à l'autre"}
+              >
+                <Moon className="w-3.5 h-3.5 text-purple-600" />
+                <span className="hidden md:inline">AS du Soir :</span>
+                <span>{showAllAsSoir ? 'Toutes les semaines' : "D'une semaine à l'autre"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Grille 2 Colonnes */}
+          <div className={`grid gap-4 sm:gap-6 ${
+            columnCategory === 'all' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 max-w-4xl mx-auto'
+          }`}>
+            {/* ========================================================= */}
+            {/* COLONNE 1 : AS DU SOIR (Mardi ou Jeudi 17h00 - 18h00)      */}
+            {/* ========================================================= */}
+            {(columnCategory === 'all' || columnCategory === 'as_soir') && (
+              <div className="bg-white rounded-2xl shadow-xs border border-purple-200 overflow-hidden flex flex-col min-h-[500px]">
+                {/* En-tête */}
+                <div className="p-3.5 sm:p-4 border-b border-purple-100 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-purple-50 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                      <Moon className="w-4 h-4 sm:w-5 sm:h-5 text-purple-100" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-slate-900 text-sm sm:text-base leading-tight flex items-center gap-1.5">
+                        <span>AS du Soir</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-black border border-purple-200">
+                          {totalAsSoir}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 hidden sm:inline" title="Affichage limité d'une semaine à l'autre pour ne pas encombrer le calendrier">
+                          D'une semaine à l'autre
+                        </span>
+                      </h3>
+                      <p className="text-[10px] sm:text-xs font-semibold text-purple-700">
+                        Mardi ou Jeudi (17h00 - 18h00) • Récurrents
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isPublic && (
+                    <button
+                      type="button"
+                      onClick={() => handleDayClick(new Date())}
+                      className="p-1.5 text-purple-700 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer"
+                      title="Créer un créneau"
+                    >
+                      <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Liste des séances AS du Soir */}
+                <div className="p-3 sm:p-4 space-y-3 flex-1 overflow-y-auto">
+                  {/* Séances à venir */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse" />
+                        À venir ({asSoirUpcoming.length})
+                      </span>
+                      {!showAllAsSoir && (
+                        <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100">
+                          Semaine en cours & suivante
+                        </span>
+                      )}
+                    </div>
+
+                    {asSoirUpcoming.map(ev => renderColumnEventCard(ev, false))}
+
+                    {asSoirUpcoming.length === 0 && (
+                      <div className="p-6 text-center text-xs text-purple-800/70 bg-purple-50/40 rounded-xl border border-dashed border-purple-200 font-medium">
+                        Aucun créneau du soir programmé à venir.
+                      </div>
+                    )}
+
+                    {/* Semaines ultérieures masquées par défaut pour ne pas surcharger */}
+                    {asSoirUpcomingLater.length > 0 && !showAllAsSoir && (
+                      <div className="pt-2 border-t border-purple-100">
+                        <button
+                          type="button"
+                          onClick={() => setShowLaterAsSoir(!showLaterAsSoir)}
+                          className="w-full flex items-center justify-between p-2 rounded-xl bg-purple-50/70 hover:bg-purple-100/70 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                            <span>Semaines suivantes ({asSoirUpcomingLater.length} créneaux)</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-purple-700">
+                            <span>{showLaterAsSoir ? 'Masquer' : 'Afficher'}</span>
+                            {showLaterAsSoir ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                          </div>
+                        </button>
+
+                        {showLaterAsSoir && (
+                          <div className="mt-2 space-y-2 animate-in fade-in">
+                            {asSoirUpcomingLater.map(ev => renderColumnEventCard(ev, false))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Historique AS du Soir */}
+                  {asSoirPast.length > 0 && (
+                    <div className="pt-3 border-t border-purple-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsAsSoirHistoryOpen(!isAsSoirHistoryOpen)}
+                        className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <History className="w-3.5 h-3.5 text-purple-600" />
+                          <span>Historique des créneaux passés ({asSoirPast.length})</span>
+                        </div>
+                        {isAsSoirHistoryOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+
+                      {isAsSoirHistoryOpen && (
+                        <div className="mt-2 space-y-2 animate-in fade-in">
+                          {asSoirPast.map(ev => renderColumnEventCard(ev, true))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ========================================================= */}
+            {/* COLONNE 2 : SÉANCES MERCREDI (Ponctuels, compétitions...)   */}
+            {/* ========================================================= */}
+            {(columnCategory === 'all' || columnCategory === 'mercredi') && (
+              <div className="bg-white rounded-2xl shadow-xs border border-blue-200 overflow-hidden flex flex-col min-h-[500px]">
+                {/* En-tête */}
+                <div className="p-3.5 sm:p-4 border-b border-blue-100 bg-gradient-to-r from-blue-50 via-cyan-50/50 to-blue-50 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                      <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-blue-100" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-slate-900 text-sm sm:text-base leading-tight flex items-center gap-1.5">
+                        <span>Séances Mercredi</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-black border border-blue-200">
+                          {totalMercredi}
+                        </span>
+                      </h3>
+                      <p className="text-[10px] sm:text-xs font-semibold text-blue-700">
+                        Mercredi • Créneaux ponctuels
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isPublic && (
+                    <button
+                      type="button"
+                      onClick={() => handleDayClick(new Date())}
+                      className="p-1.5 text-blue-700 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
+                      title="Créer un créneau"
+                    >
+                      <PlusCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Liste des séances Mercredi */}
+                <div className="p-3 sm:p-4 space-y-3 flex-1 overflow-y-auto">
+                  {/* Séances à venir */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                        À venir ({mercrediUpcoming.length})
+                      </span>
+                    </div>
+
+                    {mercrediUpcoming.map(ev => renderColumnEventCard(ev, false))}
+
+                    {mercrediUpcoming.length === 0 && (
+                      <div className="p-6 text-center text-xs text-blue-800/70 bg-blue-50/40 rounded-xl border border-dashed border-blue-200 font-medium">
+                        Aucune séance du mercredi programmée à venir.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Historique Mercredi */}
+                  {mercrediPast.length > 0 && (
+                    <div className="pt-3 border-t border-blue-100">
+                      <button
+                        type="button"
+                        onClick={() => setIsMercrediHistoryOpen(!isMercrediHistoryOpen)}
+                        className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <History className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Historique des créneaux passés ({mercrediPast.length})</span>
+                        </div>
+                        {isMercrediHistoryOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
+
+                      {isMercrediHistoryOpen && (
+                        <div className="mt-2 space-y-2 animate-in fade-in">
+                          {mercrediPast.map(ev => renderColumnEventCard(ev, true))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : viewMode === 'focus' ? (
         <div className="space-y-4 sm:space-y-6 mb-6 animate-in fade-in duration-150">
           {/* Sous-filtre tactile & indicateur */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/90 shadow-xs">
@@ -1931,7 +2573,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             </div>
             <div className="grid grid-cols-7 auto-rows-fr">
             {days.map((day, dayIdx) => {
-              const dayEvents = events.filter(e => isEventOnDay(e.date, day)).sort((a, b) => {
+              const dayEvents = events.filter(e => isEventOnDay(e.date, day) && isEventVisibleInCalendar(e)).sort((a, b) => {
                 const timeA = a.type === 'session' ? (a.raw as Session).time : (a.raw as Convocation).departureDate?.includes('T') ? (a.raw as Convocation).departureDate.split('T')[1] : '';
                 const timeB = b.type === 'session' ? (b.raw as Session).time : (b.raw as Convocation).departureDate?.includes('T') ? (b.raw as Convocation).departureDate.split('T')[1] : '';
                 return (timeA || '').localeCompare(timeB || '');

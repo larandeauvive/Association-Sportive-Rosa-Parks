@@ -115,7 +115,7 @@ export default function App() {
         if (session) {
           setEnrollSessionId(session);
         }
-        if (params.get('public') === 'calendar') {
+        if (params.get('public') === 'calendar' || params.get('public') === 'calendrier' || params.get('vue') === 'calendrier') {
           setIsPublicCalendar(true);
         }
         const schoolYearParam = params.get('schoolYear');
@@ -338,13 +338,52 @@ export default function App() {
   if (isPublicCalendar) {
     return (
       <div className="min-h-screen bg-slate-100/70 flex flex-col justify-between">
-        <div className="max-w-5xl mx-auto w-full px-2 py-3 sm:px-4 sm:py-6 space-y-3 sm:space-y-4">
+        {/* En-tête public officiel */}
+        <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-md">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white rounded-xl p-1.5 flex items-center justify-center shadow-xs shrink-0">
+                <img 
+                  src="/logo-as.png" 
+                  alt="Logo AS Rosa Parks" 
+                  className="w-full h-full object-contain"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-base sm:text-lg font-black tracking-tight text-white truncate">
+                    AS Lycée Rosa Parks
+                  </h1>
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                    Saison {activeYear}
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-400 font-medium truncate">
+                  Calendrier officiel des activités UNSS • Inscriptions en ligne
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="hidden sm:inline">Portail Public</span>
+                <span className="sm:hidden">Public</span>
+              </span>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-7xl mx-auto w-full px-2 py-3 sm:px-4 sm:py-6 space-y-3 sm:space-y-4 flex-1">
           <CalendarView 
             students={students}
             activeYear={activeYear}
             isPublic={true}
           />
-        </div>
+        </main>
         <Footer />
       </div>
     );
