@@ -723,35 +723,20 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
         const pdf = (existing.attachedPdf?.fileData ? existing.attachedPdf : null) ||
                     (s.attachedPdf?.fileData ? s.attachedPdf : null) ||
                     existing.attachedPdf || s.attachedPdf;
-        map.set(s.id, { ...existing, ...s, attachedPdf: pdf });
+        // Priorité aux données du serveur pour éviter d'écraser avec du local périmé
+        map.set(s.id, { ...s, ...existing, attachedPdf: pdf });
       } else {
         map.set(s.id, s);
       }
     }
   }
   const result = Array.from(map.values());
-  result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   return result;
 }
 
 export const getSessionsList = async (schoolYear?: string): Promise<Session[]> => {
-  if (!isTableMissingInSupabase('sessions')) {
-    try {
-      let query = supabase.from('sessions').select('*').order('date', { ascending: false });
-      if (schoolYear) {
-        query = query.eq('school_year', schoolYear);
-      }
-      const { data, error } = await query;
-      if (error) {
-        markTableMissingInSupabase('sessions', error);
-      } else {
-        const mapped = (data || []).map(rowToSession);
-        return mergeSessionsWithLocal(mapped, schoolYear);
-      }
-    } catch (err: any) {
-      markTableMissingInSupabase('sessions', err);
-    }
-  }
+  const map = new Map<string, Session>();
 
   // 1. API CloudSQL / Express
   const hasServer = await isApiServerAvailable();
@@ -759,32 +744,49 @@ export const getSessionsList = async (schoolYear?: string): Promise<Session[]> =
     try {
       const q = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
       const serverList = await fetchJson<Session[]>(`${API_BASE}/sessions${q}`);
-      if (serverList && serverList.length > 0) {
-        return mergeSessionsWithLocal(serverList, schoolYear);
+      if (serverList && Array.isArray(serverList)) {
+        for (const s of serverList) {
+          if (s && s.id) map.set(s.id, s);
+        }
       }
     } catch {
       // fallback
     }
   }
 
-  // 2. Base Firestore Cloud (accessible mondialement)
+  // 2. Base Firestore Cloud (garantit que toute séance enregistrée dans le cloud est immédiatement présente)
   try {
-    const snap = await getDocs(collection(firestoreDb, 'sessions'));
-    if (!snap.empty) {
-      const fsList: Session[] = [];
-      snap.forEach(d => {
+    const fsPromise = getDocs(collection(firestoreDb, 'sessions'));
+    const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2500));
+    const snap = await Promise.race([fsPromise, timeoutPromise]) as any;
+    if (snap && !snap.empty) {
+      snap.forEach((d: any) => {
         const s = rowToSession({ id: d.id, ...d.data() });
         if (!schoolYear || s.schoolYear === schoolYear) {
-          fsList.push(s);
+          if (!map.has(s.id)) {
+            map.set(s.id, s);
+          } else {
+            const cur = map.get(s.id)!;
+            map.set(s.id, {
+              ...s,
+              ...cur,
+              // Le serveur local / base Postgres fait autorité sur les listes récentes d'inscrits et de présents
+              enrolledStudentIds: cur.enrolledStudentIds !== undefined ? cur.enrolledStudentIds : s.enrolledStudentIds,
+              presentStudentIds: cur.presentStudentIds !== undefined ? cur.presentStudentIds : s.presentStudentIds,
+              attachedPdf: cur.attachedPdf || s.attachedPdf
+            });
+          }
         }
       });
-      fsList.sort((a, b) => b.date.localeCompare(a.date));
-      if (fsList.length > 0) {
-        return mergeSessionsWithLocal(fsList, schoolYear);
-      }
     }
   } catch (fsErr) {
-    console.warn('Firestore getSessionsList error:', fsErr);
+    // Timeout ou hors-ligne : les données de l'API serveur sont déjà dans map
+  }
+
+  if (map.size > 0) {
+    const list = Array.from(map.values());
+    list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    return list;
   }
 
   return getLocalSessions(schoolYear);

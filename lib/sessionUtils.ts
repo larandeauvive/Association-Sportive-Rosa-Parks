@@ -243,3 +243,60 @@ export function getFutureSeriesSessions(currentSession: Session, allSessions: Se
   const series = getSeriesSessions(currentSession, allSessions);
   return series.filter(s => (s.date || '') >= (currentSession.date || ''));
 }
+
+export type SessionCategory = 'as_soir' | 'mercredi';
+
+/**
+ * Catégorise un créneau d'activité :
+ * - 'as_soir' : Créneau récurrent hebdomadaire du soir (Mardi ou Jeudi, 17h00 - 18h00, ex: AS Muscu, AS Sport Co)
+ * - 'mercredi' : Créneau ponctuel (Mercredi après-midi, compétitions, tournois, sorties sportives, raids)
+ */
+export function getSessionCategory(session: Partial<Session>): SessionCategory {
+  if (!session.date) {
+    if (session.name && /soir|muscu|sport co/i.test(session.name)) return 'as_soir';
+    return 'mercredi';
+  }
+
+  // Vérifier le jour de la semaine
+  const parts = session.date.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const dateObj = new Date(y, m, d);
+    const day = dateObj.getDay(); // 0: Dim, 1: Lun, 2: Mar, 3: Mer, 4: Jeu, 5: Ven, 6: Sam
+
+    // Mardi (2) ou Jeudi (4) -> AS du Soir
+    if (day === 2 || day === 4) {
+      return 'as_soir';
+    }
+    // Mercredi (3) -> Créneau du Mercredi
+    if (day === 3) {
+      return 'mercredi';
+    }
+  }
+
+  // Vérification horaire de fin d'après-midi / soirée (17h00 - 18h00)
+  if (session.time && (session.time.startsWith('17:') || session.time.startsWith('18:') || session.time.startsWith('16:45'))) {
+    return 'as_soir';
+  }
+
+  // Mots-clés AS du Soir
+  if (session.name && /soir|muscu/i.test(session.name)) {
+    return 'as_soir';
+  }
+
+  return 'mercredi';
+}
+
+/**
+ * Renvoie le jour en français (ex: "Mardi", "Jeudi", "Mercredi")
+ */
+export function getSessionDayName(dateStr?: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return '';
+  const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  const days = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+  return days[d.getDay()] || '';
+}

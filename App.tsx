@@ -198,7 +198,7 @@ export default function App() {
   // View State
   const [activeYear, setActiveYear] = useState<string>('2026-2027');
   
-  const [currentTab, setCurrentTab] = useState<'eleves'|'convocations'|'dashboard'|'seances'|'calendrier'|'personnel'>('dashboard');
+  const [currentTab, setCurrentTab] = useState<'eleves'|'convocations'|'dashboard'|'seances'|'as_soir'|'mercredi'|'calendrier'|'personnel'>('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [autoCreateConvocation, setAutoCreateConvocation] = useState(false);
@@ -690,10 +690,18 @@ export default function App() {
             Gestion des Convocations
           </button>
           <button 
-            onClick={() => setCurrentTab('seances')}
-            className={`pb-4 text-sm font-semibold transition-colors border-b-2 whitespace-nowrap shrink-0 ${currentTab === 'seances' ? 'border-white text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+            onClick={() => setCurrentTab('as_soir')}
+            className={`pb-4 text-sm font-semibold transition-colors border-b-2 whitespace-nowrap shrink-0 flex items-center gap-1.5 ${currentTab === 'as_soir' ? 'border-purple-400 text-white font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
           >
-            Créneaux Hebdomadaires
+            <span>🌙 AS du Soir</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">Mardi & Jeudi</span>
+          </button>
+          <button 
+            onClick={() => setCurrentTab('mercredi')}
+            className={`pb-4 text-sm font-semibold transition-colors border-b-2 whitespace-nowrap shrink-0 flex items-center gap-1.5 ${currentTab === 'mercredi' ? 'border-blue-400 text-white font-bold' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+          >
+            <span>⚡ Séances Mercredi</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30">Ponctuels</span>
           </button>
           <button 
             onClick={() => setCurrentTab('calendrier')}
@@ -870,10 +878,11 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'seances' && (
+        {(currentTab === 'as_soir' || currentTab === 'mercredi' || currentTab === 'seances') && (
           <SessionManager 
             students={students.filter(s => s.schoolYear === activeYear)}
             activeYear={activeYear}
+            defaultCategory={currentTab === 'mercredi' ? 'mercredi' : 'all'}
           />
         )}
 

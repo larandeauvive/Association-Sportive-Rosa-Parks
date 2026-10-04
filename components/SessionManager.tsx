@@ -5,7 +5,8 @@ import {
   Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
   Repeat, CalendarDays, Timer, Sparkles, Info, Lock,
-  FileText, FileUp, Download, Eye, X, Loader2
+  FileText, FileUp, Download, Eye, X, Loader2,
+  Moon, Zap, Layers
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -15,24 +16,36 @@ import {
 } from '../lib/db';
 import { 
   getSeriesSessions, getFutureSeriesSessions, 
-  formatRegistrationRule, getSessionRegistrationStatus 
+  formatRegistrationRule, getSessionRegistrationStatus,
+  getSessionCategory, getSessionDayName, SessionCategory
 } from '../lib/sessionUtils';
 
 interface SessionManagerProps {
   students: Student[];
   activeYear: string;
+  defaultCategory?: 'all' | 'as_soir' | 'mercredi';
 }
 
-export function SessionManager({ students, activeYear }: SessionManagerProps) {
+export function SessionManager({ students, activeYear, defaultCategory = 'all' }: SessionManagerProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   
+  // Catégorie active : 'all' (2 colonnes côte à côte), 'as_soir' (Mardi/Jeudi 17h-18h), ou 'mercredi' (Ponctuels)
+  const [activeCategory, setActiveCategory] = useState<'all' | 'as_soir' | 'mercredi'>(defaultCategory);
+
+  useEffect(() => {
+    if (defaultCategory) {
+      setActiveCategory(defaultCategory);
+    }
+  }, [defaultCategory]);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sessionSearch, setSessionSearch] = useState('');
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isAsSoirHistoryOpen, setIsAsSoirHistoryOpen] = useState(false);
+  const [isMercrediHistoryOpen, setIsMercrediHistoryOpen] = useState(false);
   const [pastSortOrder, setPastSortOrder] = useState<'asc' | 'desc'>('asc');
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [deleteScope, setDeleteScope] = useState<'single' | 'future' | 'all'>('single');
@@ -203,30 +216,87 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     }
   };
 
-  const openCreateForm = () => {
-    setFormData({
-      name: 'AS Musculation',
-      date: new Date().toISOString().slice(0, 10),
-      time: '13:30',
-      endTime: '15:30',
-      location: 'Salle de musculation',
-      requireLicense: false,
-      requirePaid: false,
-      enrolledStudentIds: [],
-      presentStudentIds: [],
-      registrationDaysBefore: 1,
-      registrationCloseTime: '18:00',
-      blockOnlineRegistration: false,
-      directRegistrationTeacherId: undefined,
-      directRegistrationTeacherName: undefined,
-      directRegistrationNotice: undefined,
-      attachedPdf: null
-    });
-    setIsRecurring(false);
-    setRecurrenceCount(4);
-    setDeadlineMode('relative');
-    setEnableOpenDeadline(false);
-    setUpdateScope('all');
+  const openCreateForm = (presetCategory?: 'as_soir' | 'mercredi') => {
+    const targetCategory = presetCategory || (activeCategory !== 'all' ? activeCategory : 'as_soir');
+    
+    // Proposer automatiquement la prochaine date adaptée
+    const now = new Date();
+    let proposedDate = new Date();
+    
+    if (targetCategory === 'as_soir') {
+      // Trouver le prochain mardi (2) ou jeudi (4)
+      for (let i = 1; i <= 7; i++) {
+        const testD = new Date(now);
+        testD.setDate(now.getDate() + i);
+        if (testD.getDay() === 2 || testD.getDay() === 4) {
+          proposedDate = testD;
+          break;
+        }
+      }
+    } else {
+      // Trouver le prochain mercredi (3)
+      for (let i = 1; i <= 7; i++) {
+        const testD = new Date(now);
+        testD.setDate(now.getDate() + i);
+        if (testD.getDay() === 3) {
+          proposedDate = testD;
+          break;
+        }
+      }
+    }
+
+    const proposedDateStr = `${proposedDate.getFullYear()}-${String(proposedDate.getMonth() + 1).padStart(2, '0')}-${String(proposedDate.getDate()).padStart(2, '0')}`;
+
+    if (targetCategory === 'as_soir') {
+      setFormData({
+        name: 'AS Musculation',
+        date: proposedDateStr,
+        time: '17:00',
+        endTime: '18:00',
+        location: 'Salle de musculation',
+        requireLicense: false,
+        requirePaid: false,
+        enrolledStudentIds: [],
+        presentStudentIds: [],
+        registrationDaysBefore: 0,
+        registrationCloseTime: '12:00',
+        blockOnlineRegistration: false,
+        directRegistrationTeacherId: undefined,
+        directRegistrationTeacherName: undefined,
+        directRegistrationNotice: undefined,
+        attachedPdf: null
+      });
+      setIsRecurring(true);
+      setRecurrenceCount(8);
+      setDeadlineMode('relative');
+      setEnableOpenDeadline(false);
+      setUpdateScope('all');
+    } else {
+      setFormData({
+        name: 'Rencontre / Sortie Mercredi',
+        date: proposedDateStr,
+        time: '13:30',
+        endTime: '16:30',
+        location: 'Gymnase / Extérieur',
+        requireLicense: false,
+        requirePaid: false,
+        enrolledStudentIds: [],
+        presentStudentIds: [],
+        registrationDaysBefore: 1,
+        registrationCloseTime: '18:00',
+        blockOnlineRegistration: false,
+        directRegistrationTeacherId: undefined,
+        directRegistrationTeacherName: undefined,
+        directRegistrationNotice: undefined,
+        attachedPdf: null
+      });
+      setIsRecurring(false);
+      setRecurrenceCount(1);
+      setDeadlineMode('relative');
+      setEnableOpenDeadline(false);
+      setUpdateScope('single');
+    }
+
     setIsCreating(true);
   };
 
@@ -473,10 +543,20 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
 
     try {
       const newEnrolledIds = Array.from(enrolled);
+      const newPresentIds = Array.from(present);
+
+      // Mise à jour optimiste locale immédiate pour réactivité instantanée
+      setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+        ...s,
+        enrolledStudentIds: newEnrolledIds,
+        presentStudentIds: newPresentIds
+      } : s));
+
       await saveSessionApi({
+        ...activeSession,
         id: activeSession.id,
         enrolledStudentIds: newEnrolledIds,
-        presentStudentIds: Array.from(present)
+        presentStudentIds: newPresentIds
       });
       
       if (activeSession.convocationId) {
@@ -500,9 +580,18 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
       present.add(studentId);
     }
     try {
+      const newPresentIds = Array.from(present);
+
+      // Mise à jour optimiste locale immédiate
+      setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+        ...s,
+        presentStudentIds: newPresentIds
+      } : s));
+
       await saveSessionApi({
+        ...activeSession,
         id: activeSession.id,
-        presentStudentIds: Array.from(present)
+        presentStudentIds: newPresentIds
       });
       await fetchSessionManagerData();
     } catch (err) {
@@ -527,8 +616,14 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     });
   }, [students, searchTerm, formData.targetAudience]);
 
-  // Partitionnement chronologique : Séances à venir vs Séances passées
-  const { upcomingSessions, pastSessions } = useMemo(() => {
+  // Partitionnement chronologique et par catégorie :
+  // Colonne 1 : AS du Soir (Mardi ou Jeudi, 17h00 - 18h00, récurrents)
+  // Colonne 2 : Mercredi (Créneaux ponctuels, compétitions, tournois, sorties)
+  const { 
+    asSoirUpcoming, asSoirPast, 
+    mercrediUpcoming, mercrediPast,
+    totalAsSoir, totalMercredi 
+  } = useMemo(() => {
     const q = sessionSearch.trim().toLowerCase();
     const filtered = q
       ? sessions.filter(s => 
@@ -545,38 +640,51 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
       return (a.time || '').localeCompare(b.time || '');
     });
 
-    const upcoming: Session[] = [];
-    const past: Session[] = [];
+    const soirUp: Session[] = [];
+    const soirPast: Session[] = [];
+    const merUp: Session[] = [];
+    const merPast: Session[] = [];
 
     sorted.forEach(s => {
-      if ((s.date || '') >= todayStr) {
-        upcoming.push(s);
+      const cat = getSessionCategory(s);
+      const isUpcoming = (s.date || '') >= todayStr;
+
+      if (cat === 'as_soir') {
+        if (isUpcoming) soirUp.push(s);
+        else soirPast.push(s);
       } else {
-        past.push(s);
+        if (isUpcoming) merUp.push(s);
+        else merPast.push(s);
       }
     });
 
     return {
-      upcomingSessions: upcoming,
-      pastSessions: past
+      asSoirUpcoming: soirUp,
+      asSoirPast: soirPast,
+      mercrediUpcoming: merUp,
+      mercrediPast: merPast,
+      totalAsSoir: soirUp.length + soirPast.length,
+      totalMercredi: merUp.length + merPast.length
     };
   }, [sessions, sessionSearch, todayStr]);
 
-  const displayedPastSessions = useMemo(() => {
-    if (pastSortOrder === 'desc') {
-      return [...pastSessions].reverse();
-    }
-    return pastSessions;
-  }, [pastSessions, pastSortOrder]);
+  const displayedAsSoirPast = useMemo(() => {
+    if (pastSortOrder === 'desc') return [...asSoirPast].reverse();
+    return asSoirPast;
+  }, [asSoirPast, pastSortOrder]);
+
+  const displayedMercrediPast = useMemo(() => {
+    if (pastSortOrder === 'desc') return [...mercrediPast].reverse();
+    return mercrediPast;
+  }, [mercrediPast, pastSortOrder]);
 
   // Si la séance active est dans l'historique ou s'il n'y a aucune séance à venir, ouvrir l'historique automatiquement
   useEffect(() => {
-    if (activeSessionId && pastSessions.some(s => s.id === activeSessionId)) {
-      setIsHistoryOpen(true);
-    } else if (upcomingSessions.length === 0 && pastSessions.length > 0) {
-      setIsHistoryOpen(true);
+    if (activeSessionId) {
+      if (asSoirPast.some(s => s.id === activeSessionId)) setIsAsSoirHistoryOpen(true);
+      if (mercrediPast.some(s => s.id === activeSessionId)) setIsMercrediHistoryOpen(true);
     }
-  }, [activeSessionId, pastSessions, upcomingSessions.length]);
+  }, [activeSessionId, asSoirPast, mercrediPast]);
 
   const renderSessionCard = (s: Session, isPast = false) => {
     const isSelected = activeSessionId === s.id && !isCreating;
@@ -584,6 +692,9 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
     const series = getSeriesSessions(s, sessions);
     const isSeries = series.length > 1;
     const deadlineText = formatRegistrationRule(s);
+    const category = getSessionCategory(s);
+    const isSoir = category === 'as_soir';
+    const dayName = getSessionDayName(s.date);
 
     return (
       <div 
@@ -591,27 +702,39 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
         onClick={() => { setActiveSessionId(s.id); setIsCreating(false); }}
         className={`p-3 rounded-xl cursor-pointer transition-all border ${
           isSelected 
-            ? 'bg-indigo-50/90 border-indigo-300 shadow-xs ring-1 ring-indigo-400' 
+            ? isSoir
+              ? 'bg-purple-50/95 border-purple-400 shadow-sm ring-2 ring-purple-400'
+              : 'bg-blue-50/95 border-blue-400 shadow-sm ring-2 ring-blue-400'
             : isPast
               ? 'bg-slate-50/70 border-slate-200/80 hover:border-slate-300 hover:bg-slate-100/60'
               : isToday
-                ? 'bg-blue-50/60 border-blue-200 hover:border-blue-400'
+                ? 'bg-amber-50/70 border-amber-300 hover:border-amber-400 shadow-xs'
                 : 'bg-white border-slate-200/80 hover:border-slate-300 hover:shadow-xs'
         }`}
       >
         <div className="flex justify-between items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`font-bold truncate text-sm ${isSelected ? 'text-indigo-950 font-extrabold' : isPast ? 'text-slate-700' : 'text-slate-900'}`}>
+              <span className={`font-bold truncate text-sm ${isSelected ? (isSoir ? 'text-purple-950 font-black' : 'text-blue-950 font-black') : isPast ? 'text-slate-700' : 'text-slate-900'}`}>
                 {s.name}
               </span>
+              {isSoir && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 flex items-center gap-0.5 border border-purple-200" title="AS du Soir (Mardi / Jeudi)">
+                  <Moon className="w-2.5 h-2.5 text-purple-600" /> {dayName || 'Soir'}
+                </span>
+              )}
+              {!isSoir && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 flex items-center gap-0.5 border border-blue-200" title="Mercredi (Créneau ponctuel)">
+                  <Zap className="w-2.5 h-2.5 text-blue-600" /> Mercredi
+                </span>
+              )}
               {isSeries && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700 flex items-center gap-0.5 border border-purple-200" title={`Créneau récurrent (${series.length} séances)`}>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 flex items-center gap-0.5 border border-slate-200" title={`Créneau récurrent (${series.length} séances)`}>
                   <Repeat className="w-2.5 h-2.5" /> Récurrent
                 </span>
               )}
               {isToday && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white shadow-xs">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500 text-white shadow-xs">
                   Aujourd'hui
                 </span>
               )}
@@ -635,10 +758,11 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
             </div>
             <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
               <span className="font-semibold text-slate-700">
-                {new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}
+                {dayName ? `${dayName} ` : ''}{new Date(s.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
               </span>
               <span>•</span>
-              <span>{s.time}{s.endTime ? ` - ${s.endTime}` : ''}</span>
+              <span className="font-medium text-slate-800">{s.time}{s.endTime ? ` - ${s.endTime}` : ''}</span>
+              {s.location && <span className="text-slate-400 truncate">• {s.location}</span>}
             </div>
             {deadlineText && deadlineText !== 'Inscriptions sans date limite' && (
               <div className="text-[10px] text-indigo-700 font-medium mt-1 flex items-center gap-1 truncate">
@@ -656,7 +780,9 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
             <div className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
               isPast 
                 ? 'bg-slate-100 border-slate-200 text-slate-600' 
-                : 'bg-white border-slate-200 text-slate-700'
+                : isSelected
+                  ? 'bg-white border-indigo-200 text-indigo-900 font-bold'
+                  : 'bg-white border-slate-200 text-slate-700'
             }`} title="Présents / Inscrits">
               {(s.presentStudentIds || []).length} / {(s.enrolledStudentIds || []).length}
             </div>
@@ -675,115 +801,238 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
   };
 
   return (
-    <div className="flex flex-col md:flex-row gap-6 min-h-[600px] h-full">
-      {/* Left Sidebar: Session List */}
-      <div className="w-full md:w-80 flex flex-col gap-4">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-          <button 
-            onClick={openCreateForm}
-            className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-4 rounded-lg font-semibold hover:bg-slate-800 transition shadow-sm cursor-pointer"
-          >
-            <PlusCircle className="w-5 h-5" /> Nouvelle Séance
-          </button>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col">
-          <div className="p-3.5 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-            <h2 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
-              <Calendar className="w-4 h-4 text-indigo-600" /> Séances ({sessions.length})
-            </h2>
-            <span className="text-[11px] text-slate-500 font-medium">Ordre chrono</span>
+    <div className="flex flex-col xl:flex-row gap-6 min-h-[600px] h-full">
+      {/* Colonne(s) de gauche : Créneaux récurrents AS du Soir et Créneaux ponctuels Mercredi */}
+      <div className={`flex flex-col gap-4 shrink-0 transition-all ${
+        activeCategory === 'all' ? 'w-full xl:w-[680px]' : 'w-full xl:w-96'
+      }`}>
+        {/* Bandeau d'actions et Sélecteur de vue */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => openCreateForm(activeCategory === 'mercredi' ? 'mercredi' : 'as_soir')}
+              className="flex-1 flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-3 sm:px-4 rounded-lg font-bold hover:bg-slate-800 transition shadow-sm cursor-pointer text-xs sm:text-sm"
+            >
+              <PlusCircle className="w-4 h-4 text-emerald-400" />
+              <span>Nouveau Créneau</span>
+            </button>
           </div>
 
-          {sessions.length > 4 && (
-            <div className="p-2 border-b border-slate-100 bg-white">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                <input 
-                  type="text"
-                  placeholder="Rechercher une séance..."
-                  value={sessionSearch}
-                  onChange={e => setSessionSearch(e.target.value)}
-                  className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
+          {/* Sélecteur de colonnes / onglets rapides */}
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setActiveCategory('all')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                activeCategory === 'all'
+                  ? 'bg-white text-slate-900 shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+              <span>2 Colonnes</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveCategory('as_soir')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                activeCategory === 'as_soir'
+                  ? 'bg-purple-600 text-white shadow-xs font-bold'
+                  : 'text-purple-800 hover:bg-purple-50'
+              }`}
+            >
+              <Moon className="w-3.5 h-3.5 text-purple-300" />
+              <span>AS du Soir ({totalAsSoir})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveCategory('mercredi')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                activeCategory === 'mercredi'
+                  ? 'bg-blue-600 text-white shadow-xs font-bold'
+                  : 'text-blue-800 hover:bg-blue-50'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-blue-300" />
+              <span>Mercredi ({totalMercredi})</span>
+            </button>
+          </div>
+
+          {/* Recherche */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+            <input 
+              type="text" 
+              placeholder="Rechercher un créneau (nom, date, lieu...)" 
+              value={sessionSearch} 
+              onChange={e => setSessionSearch(e.target.value)} 
+              className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500" 
+            />
+          </div>
+        </div>
+
+        {/* CONTENEUR DES COLONNES */}
+        <div className={`grid gap-4 ${
+          activeCategory === 'all' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'
+        }`}>
+
+          {/* ========================================================= */}
+          {/* COLONNE 1 : AS DU SOIR (Mardi & Jeudi 17h00 - 18h00)       */}
+          {/* ========================================================= */}
+          {(activeCategory === 'all' || activeCategory === 'as_soir') && (
+            <div className="bg-white rounded-xl shadow-sm border border-purple-200 overflow-hidden flex flex-col min-h-[500px]">
+              {/* En-tête de colonne AS du Soir */}
+              <div className="p-3 border-b border-purple-100 bg-gradient-to-r from-purple-50 to-indigo-50/60 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                    <Moon className="w-4 h-4 text-purple-100" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm leading-tight flex items-center gap-1.5">
+                      <span>AS du Soir</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-800 font-bold border border-purple-200">
+                        {totalAsSoir}
+                      </span>
+                    </h3>
+                    <p className="text-[10px] font-semibold text-purple-700">
+                      Mardi ou Jeudi (17h00 - 18h00) • Récurrents
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openCreateForm('as_soir')}
+                  className="p-1 text-purple-700 hover:bg-purple-100 rounded-md transition-colors"
+                  title="Ajouter un créneau AS du Soir (Mardi / Jeudi)"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Liste des séances AS du Soir */}
+              <div className="overflow-y-auto flex-1 p-2 space-y-3">
+                {/* Séances à venir AS du Soir */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-purple-600 inline-block animate-pulse"></span>
+                      À venir ({asSoirUpcoming.length})
+                    </span>
+                  </div>
+
+                  {asSoirUpcoming.map(s => renderSessionCard(s, false))}
+
+                  {asSoirUpcoming.length === 0 && (
+                    <div className="p-3 text-center text-xs text-purple-800/60 bg-purple-50/40 rounded-lg border border-dashed border-purple-200">
+                      Aucun créneau du soir programmé.
+                    </div>
+                  )}
+                </div>
+
+                {/* Historique des séances passées AS du Soir */}
+                {asSoirPast.length > 0 && (
+                  <div className="pt-2 border-t border-purple-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsAsSoirHistoryOpen(!isAsSoirHistoryOpen)}
+                      className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-purple-600" />
+                        <span>Historique ({asSoirPast.length})</span>
+                      </div>
+                      {isAsSoirHistoryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </button>
+
+                    {isAsSoirHistoryOpen && (
+                      <div className="mt-1.5 space-y-1.5 animate-in fade-in">
+                        {displayedAsSoirPast.map(s => renderSessionCard(s, true))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          <div className="overflow-y-auto flex-1 p-2 space-y-3">
-            {/* SECTION 1 : SÉANCES À VENIR & AUJOURD'HUI */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between px-2 pt-1 pb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-                  À venir & aujourd'hui
-                </span>
-                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
-                  {upcomingSessions.length}
-                </span>
-              </div>
-
-              {upcomingSessions.map(s => renderSessionCard(s, false))}
-
-              {upcomingSessions.length === 0 && (
-                <div className="p-3 text-center text-xs text-slate-400 bg-slate-50 rounded-lg border border-dashed border-slate-200">
-                  Aucune séance future programmée.
+          {/* ========================================================= */}
+          {/* COLONNE 2 : MERCREDI (Créneaux ponctuels, compétitions)    */}
+          {/* ========================================================= */}
+          {(activeCategory === 'all' || activeCategory === 'mercredi') && (
+            <div className="bg-white rounded-xl shadow-sm border border-blue-200 overflow-hidden flex flex-col min-h-[500px]">
+              {/* En-tête de colonne Mercredi */}
+              <div className="p-3 border-b border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50/60 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                    <Zap className="w-4 h-4 text-blue-100" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm leading-tight flex items-center gap-1.5">
+                      <span>Séances Mercredi</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 font-bold border border-blue-200">
+                        {totalMercredi}
+                      </span>
+                    </h3>
+                    <p className="text-[10px] font-semibold text-blue-700">
+                      Mercredi • Créneaux ponctuels
+                    </p>
+                  </div>
                 </div>
-              )}
-            </div>
-
-            {/* SECTION 2 : HISTORIQUE DES SÉANCES PASSÉES (DÉROULANT) */}
-            {pastSessions.length > 0 && (
-              <div className="pt-2 border-t border-slate-200/80">
                 <button
                   type="button"
-                  onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
-                    isHistoryOpen 
-                      ? 'bg-slate-100/90 border-slate-300 text-slate-900 shadow-xs' 
-                      : 'bg-slate-50 hover:bg-slate-100/70 border-slate-200 text-slate-700'
-                  }`}
+                  onClick={() => openCreateForm('mercredi')}
+                  className="p-1 text-blue-700 hover:bg-blue-100 rounded-md transition-colors"
+                  title="Ajouter un créneau du Mercredi"
                 >
-                  <div className="flex items-center gap-2">
-                    <History className={`w-4 h-4 ${isHistoryOpen ? 'text-indigo-600' : 'text-slate-500'}`} />
-                    <span className="text-xs font-bold">
-                      Historique des séances passées
-                    </span>
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
-                      {pastSessions.length}
+                  <PlusCircle className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Liste des séances Mercredi */}
+              <div className="overflow-y-auto flex-1 p-2 space-y-3">
+                {/* Séances à venir Mercredi */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
+                      À venir ({mercrediUpcoming.length})
                     </span>
                   </div>
-                  {isHistoryOpen ? (
-                    <ChevronDown className="w-4 h-4 text-slate-500" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-slate-500" />
-                  )}
-                </button>
 
-                {isHistoryOpen && (
-                  <div className="mt-2 space-y-1.5 pl-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                    <div className="flex items-center justify-between px-1.5 py-1 text-[11px] text-slate-500">
-                      <span>Tri : {pastSortOrder === 'asc' ? '📅 Chronologique' : '⏳ Récents d\'abord'}</span>
-                      <button
-                        type="button"
-                        onClick={() => setPastSortOrder(pastSortOrder === 'asc' ? 'desc' : 'asc')}
-                        className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 hover:underline cursor-pointer"
-                        title="Inverser l'ordre du tri"
-                      >
-                        <ArrowUpDown className="w-3 h-3" /> Inverser
-                      </button>
+                  {mercrediUpcoming.map(s => renderSessionCard(s, false))}
+
+                  {mercrediUpcoming.length === 0 && (
+                    <div className="p-3 text-center text-xs text-blue-800/60 bg-blue-50/40 rounded-lg border border-dashed border-blue-200">
+                      Aucune séance du mercredi programmée.
                     </div>
+                  )}
+                </div>
 
-                    {displayedPastSessions.map(s => renderSessionCard(s, true))}
+                {/* Historique des séances passées Mercredi */}
+                {mercrediPast.length > 0 && (
+                  <div className="pt-2 border-t border-blue-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsMercrediHistoryOpen(!isMercrediHistoryOpen)}
+                      className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Historique ({mercrediPast.length})</span>
+                      </div>
+                      {isMercrediHistoryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </button>
+
+                    {isMercrediHistoryOpen && (
+                      <div className="mt-1.5 space-y-1.5 animate-in fade-in">
+                        {displayedMercrediPast.map(s => renderSessionCard(s, true))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-
-            {sessions.length === 0 && (
-              <p className="text-sm text-slate-500 text-center py-6">Aucune séance pour cette année.</p>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -906,6 +1155,52 @@ export function SessionManager({ students, activeYear }: SessionManagerProps) {
                   </div>
                 );
               })()}
+
+              {/* SÉLECTEUR RAPIDE DE TYPE DE CRÉNEAU EN MODE CRÉATION */}
+              {!formData.id && (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
+                  <span className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Type de créneau à programmer :
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => openCreateForm('as_soir')}
+                      className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        formData.time?.startsWith('17:') || formData.time?.startsWith('18:')
+                          ? 'bg-purple-50/90 border-purple-500 text-purple-950 font-bold shadow-xs ring-1 ring-purple-400'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-purple-300'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <Moon className="w-4 h-4 text-purple-100" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold block text-purple-950">🌙 AS du Soir</span>
+                        <span className="text-[11px] text-purple-700 block">Mardi ou Jeudi (17h00 - 18h00) • Récurrent</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openCreateForm('mercredi')}
+                      className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        !formData.time?.startsWith('17:') && !formData.time?.startsWith('18:')
+                          ? 'bg-blue-50/90 border-blue-500 text-blue-950 font-bold shadow-xs ring-1 ring-blue-400'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <Zap className="w-4 h-4 text-blue-100" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold block text-blue-950">⚡ Créneau Mercredi</span>
+                        <span className="text-[11px] text-blue-700 block">13h30 - 16h30 • Ponctuel / Sorties / Compétitions</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1">Nom de la séance</label>
