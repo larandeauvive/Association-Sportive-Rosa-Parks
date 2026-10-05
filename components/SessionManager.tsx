@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
   Repeat, CalendarDays, Timer, Sparkles, Info, Lock,
   FileText, FileUp, Download, Eye, X, Loader2,
-  Moon, Zap, Layers
+  Moon, Zap, Layers, Printer
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -25,9 +25,10 @@ interface SessionManagerProps {
   students: Student[];
   activeYear: string;
   defaultCategory?: 'all' | 'as_soir' | 'mercredi';
+  initialTimeFilter?: 'upcoming' | 'past' | 'all';
 }
 
-export function SessionManager({ students, activeYear, defaultCategory = 'all' }: SessionManagerProps) {
+export function SessionManager({ students, activeYear, defaultCategory = 'all', initialTimeFilter = 'upcoming' }: SessionManagerProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   
@@ -45,9 +46,23 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sessionSearch, setSessionSearch] = useState('');
+
+  // Filtre temporel : 'upcoming' (créneaux à venir), 'past' (créneaux passés / historique), 'all' (tous les créneaux)
+  const [timeFilter, setTimeFilter] = useState<'upcoming' | 'past' | 'all'>(initialTimeFilter || 'upcoming');
+
+  useEffect(() => {
+    if (initialTimeFilter) {
+      setTimeFilter(initialTimeFilter);
+    }
+  }, [initialTimeFilter]);
+
+  // Filtre et recherche internes pour le pointage d'appel (liste des inscrits)
+  const [attendanceSearch, setAttendanceSearch] = useState('');
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'all' | 'present' | 'absent'>('all');
+
   const [isAsSoirHistoryOpen, setIsAsSoirHistoryOpen] = useState(false);
   const [isMercrediHistoryOpen, setIsMercrediHistoryOpen] = useState(false);
-  const [pastSortOrder, setPastSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [pastSortOrder, setPastSortOrder] = useState<'asc' | 'desc'>('desc');
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [deleteScope, setDeleteScope] = useState<'single' | 'future' | 'all'>('single');
 
@@ -153,6 +168,38 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
     return () => clearTimeout(timer);
   }, [notification]);
 
+  // Sélection automatique de la séance la plus pertinente selon la catégorie et le filtre temporel
+  const selectBestSession = useCallback((list: Session[], category: 'all' | 'as_soir' | 'mercredi', filter: 'upcoming' | 'past' | 'all') => {
+    let pool = list;
+    if (category !== 'all') {
+      const catFiltered = pool.filter(s => getSessionCategory(s) === category);
+      if (catFiltered.length > 0) pool = catFiltered;
+    }
+
+    const now = new Date();
+    const curDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    if (filter === 'past') {
+      // Pour les séances passées, sélectionner la plus récente
+      const pastList = pool.filter(s => (s.date || '') < curDate);
+      if (pastList.length > 0) {
+        return pastList[pastList.length - 1]?.id || null;
+      }
+    }
+
+    if (filter === 'upcoming') {
+      const todaySess = pool.find(s => s.date === curDate);
+      const upcomingSess = pool.find(s => (s.date || '') > curDate);
+      if (todaySess) return todaySess.id;
+      if (upcomingSess) return upcomingSess.id;
+    }
+
+    const todaySess = pool.find(s => s.date === curDate);
+    const upcomingSess = pool.find(s => (s.date || '') > curDate);
+    const latestPast = [...pool].reverse().find(s => (s.date || '') < curDate);
+    return (todaySess || upcomingSess || latestPast || pool[0])?.id || null;
+  }, []);
+
   const fetchSessionManagerData = useCallback(async () => {
     try {
       const [tList, sList] = await Promise.all([
@@ -169,24 +216,373 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
       });
       setSessions(sList);
 
-      // Présélection automatique de la séance la plus pertinente
+      // Présélection automatique de la séance la plus pertinente selon la catégorie active
       setActiveSessionId(prev => {
-        if (prev && sList.some(s => s.id === prev)) return prev;
-        const now = new Date();
-        const curDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const todaySess = sList.find(s => s.date === curDate);
-        const upcomingSess = sList.find(s => s.date > curDate);
-        const latestPast = [...sList].reverse().find(s => s.date < curDate);
-        return (todaySess || upcomingSess || latestPast || sList[0])?.id || null;
+        if (prev && sList.some(s => s.id === prev)) {
+          const cur = sList.find(s => s.id === prev);
+          if (cur && (activeCategory === 'all' || getSessionCategory(cur) === activeCategory)) {
+            return prev;
+          }
+        }
+        return selectBestSession(sList, activeCategory, timeFilter);
       });
     } catch (err) {
       console.warn("Erreur chargement séances:", err);
     }
-  }, [activeYear]);
+  }, [activeYear, activeCategory, timeFilter, selectBestSession]);
 
   useEffect(() => {
     fetchSessionManagerData();
   }, [fetchSessionManagerData]);
+
+  // Réajuster la sélection quand l'utilisateur change d'onglet ou de filtre temporel
+  useEffect(() => {
+    if (sessions.length > 0) {
+      setActiveSessionId(prev => {
+        const cur = sessions.find(s => s.id === prev);
+        const matchesCategory = !cur || activeCategory === 'all' || getSessionCategory(cur) === activeCategory;
+        const isPast = cur && (cur.date || '') < todayStr;
+        const matchesTime = !cur || timeFilter === 'all' || (timeFilter === 'past' ? isPast : !isPast);
+        if (cur && matchesCategory && matchesTime) return prev;
+        return selectBestSession(sessions, activeCategory, timeFilter);
+      });
+    }
+  }, [activeCategory, timeFilter, selectBestSession, sessions, todayStr]);
+
+  // Fonction d'impression complète et professionnelle de la feuille d'appel & d'émargement
+  const handlePrintSession = (sessionToPrint = activeSession) => {
+    if (!sessionToPrint) return;
+    const enrolledIds = sessionToPrint.enrolledStudentIds || [];
+    const presentIds = new Set(sessionToPrint.presentStudentIds || []);
+    
+    // Récupérer les élèves inscrits
+    const enrolledList = students
+      .filter(s => enrolledIds.includes(s.id))
+      .sort((a, b) => {
+        const clsCmp = (a.classGroup || '').localeCompare(b.classGroup || '');
+        if (clsCmp !== 0) return clsCmp;
+        return (a.lastName || '').localeCompare(b.lastName || '');
+      });
+
+    const teacherNames = sessionToPrint.teacherIds?.map(tid => teachers.find(t => t.id === tid)?.name).filter(Boolean).join(', ') || 'Non assigné';
+    const isSoir = getSessionCategory(sessionToPrint) === 'as_soir';
+    const dayName = getSessionDayName(sessionToPrint.date);
+    const dateFormatted = sessionToPrint.date 
+      ? new Date(sessionToPrint.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      : 'Date non définie';
+    const isPast = (sessionToPrint.date || '') < todayStr;
+    const presentCount = enrolledList.filter(s => presentIds.has(s.id)).length;
+    const totalCount = enrolledList.length;
+    const presenceRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+
+    const printWindow = window.open('', '', 'height=850,width=1050');
+    if (!printWindow) {
+      alert("Veuillez autoriser l'ouverture des fenêtres pop-up dans votre navigateur pour imprimer la feuille de séance.");
+      return;
+    }
+
+    // Si aucun élève inscrit, générer 25 lignes vierges pour prise de notes manuscrite au gymnase
+    const blankRowsCount = enrolledList.length === 0 ? 25 : Math.max(5, 12 - enrolledList.length);
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Feuille d'Appel - ${sessionToPrint.name} - ${sessionToPrint.date}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 10mm 12mm 10mm 12mm;
+          }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #0f172a;
+            padding: 0;
+            margin: 0;
+            font-size: 11.5px;
+            line-height: 1.35;
+          }
+          .header-box {
+            border-bottom: 2px solid #0f172a;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+          }
+          .title-area h1 {
+            font-size: 18px;
+            font-weight: 900;
+            margin: 0 0 3px 0;
+            color: #0f172a;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .title-area .sub {
+            font-size: 13px;
+            font-weight: 700;
+            color: #4338ca;
+            margin: 0;
+          }
+          .badge-box {
+            text-align: right;
+            font-size: 11px;
+            font-weight: 700;
+          }
+          .tag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10.5px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border: 1px solid #cbd5e1;
+            background: #f1f5f9;
+            color: #1e293b;
+          }
+          .tag-soir { background: #faf5ff; border-color: #d8b4fe; color: #6b21a8; }
+          .tag-mercredi { background: #eff6ff; border-color: #93c5fd; color: #1e40af; }
+          .tag-past { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+
+          .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 9px 12px;
+            margin-bottom: 12px;
+          }
+          .meta-item { display: flex; flex-direction: column; }
+          .meta-label {
+            font-size: 9.5px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #64748b;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
+          }
+          .meta-val {
+            font-size: 12px;
+            font-weight: 700;
+            color: #0f172a;
+          }
+
+          .stats-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            padding: 6px 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            font-size: 11px;
+            font-weight: 700;
+          }
+          .stats-bar span { display: inline-flex; align-items: center; gap: 4px; }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            margin-bottom: 14px;
+          }
+          th, td {
+            border: 1px solid #94a3b8;
+            padding: 5px 7px;
+            text-align: left;
+            vertical-align: middle;
+          }
+          th {
+            background: #e2e8f0;
+            font-weight: 800;
+            text-transform: uppercase;
+            font-size: 9.5px;
+            letter-spacing: 0.5px;
+            color: #0f172a;
+          }
+          tr:nth-child(even) td {
+            background-color: #f8fafc;
+          }
+          .text-center { text-align: center; }
+          .status-present {
+            color: #15803d;
+            font-weight: 800;
+            background: #dcfce7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            display: inline-block;
+          }
+          .status-absent {
+            color: #b91c1c;
+            font-weight: 800;
+            background: #fee2e2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            display: inline-block;
+          }
+          .check-box {
+            width: 14px;
+            height: 14px;
+            border: 1.5px solid #475569;
+            display: inline-block;
+            border-radius: 2px;
+            vertical-align: middle;
+          }
+
+          .footer-box {
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding-top: 10px;
+            border-top: 1px solid #cbd5e1;
+          }
+          .sign-box {
+            border: 1px dashed #64748b;
+            border-radius: 6px;
+            width: 260px;
+            height: 65px;
+            padding: 6px;
+            font-size: 10px;
+            color: #64748b;
+            background: #fafafa;
+          }
+          .print-time {
+            font-size: 9.5px;
+            color: #64748b;
+          }
+
+          @media print {
+            body { padding: 0; }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header-box">
+          <div class="title-area">
+            <h1>AS Rosa Parks • Feuille d'Appel & d'Émargement</h1>
+            <div class="sub">${sessionToPrint.name} — ${activeYear}</div>
+          </div>
+          <div class="badge-box">
+            <span class="tag ${isSoir ? 'tag-soir' : 'tag-mercredi'}">
+              ${isSoir ? '🌙 AS du Soir (' + (dayName || 'Mardi/Jeudi') + ')' : '⚡ Mercredi'}
+            </span>
+            ${isPast ? '<div style="margin-top:3px;"><span class="tag tag-past">📜 Séance Passée (Bilan)</span></div>' : ''}
+          </div>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span class="meta-label">📅 Date</span>
+            <span class="meta-val">${dateFormatted}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">🕒 Horaires</span>
+            <span class="meta-val">${sessionToPrint.time || '17:00'} ${sessionToPrint.endTime ? '- ' + sessionToPrint.endTime : ''}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">📍 Lieu</span>
+            <span class="meta-val">${sessionToPrint.location || 'Salle AS / Gymnase'}</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">👤 Enseignant(s)</span>
+            <span class="meta-val">${teacherNames}</span>
+          </div>
+        </div>
+
+        ${sessionToPrint.description ? `
+          <div style="background:#f1f5f9; padding: 6px 10px; border-radius: 4px; border: 1px solid #e2e8f0; margin-bottom: 10px; font-size: 11px;">
+            <strong>Consignes / Notes :</strong> ${sessionToPrint.description}
+          </div>
+        ` : ''}
+
+        <div class="stats-bar">
+          <span>👥 Inscrits : <strong>${totalCount} élève${totalCount > 1 ? 's' : ''}</strong></span>
+          <span>✅ Présents : <strong>${presentCount}</strong></span>
+          <span>❌ Absents : <strong>${Math.max(0, totalCount - presentCount)}</strong></span>
+          <span>📊 Taux de présence : <strong>${presenceRate}%</strong></span>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25px;" class="text-center">N°</th>
+              <th style="width: 24%;">Nom</th>
+              <th style="width: 22%;">Prénom</th>
+              <th style="width: 60px;" class="text-center">Classe</th>
+              <th style="width: 70px;" class="text-center">Cotisation</th>
+              <th style="width: 90px;" class="text-center">Pointage</th>
+              <th>Émargement / Signature élève</th>
+              <th style="width: 18%;">Observations</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${enrolledList.map((s, idx) => {
+              const isP = presentIds.has(s.id);
+              const isPaid = String(s.paid).toUpperCase() === 'OUI';
+              return `
+                <tr>
+                  <td class="text-center" style="font-weight:bold; color:#64748b;">${idx + 1}</td>
+                  <td style="font-weight:bold; text-transform:uppercase;">${s.lastName || ''}</td>
+                  <td>${s.firstName || ''}</td>
+                  <td class="text-center" style="font-weight:bold;">${s.classGroup || ''}</td>
+                  <td class="text-center" style="font-size:10px;">
+                    ${isPaid ? 'Payé ✓' : '<span style="color:#b91c1c; font-weight:bold;">Non payé ⚠️</span>'}
+                  </td>
+                  <td class="text-center">
+                    ${isP 
+                      ? '<span class="status-present">PRÉSENT ✓</span>' 
+                      : (isPast ? '<span class="status-absent">ABSENT</span>' : '<span class="check-box"></span>')}
+                  </td>
+                  <td></td>
+                  <td style="font-size:10px; color:#64748b;"></td>
+                </tr>
+              `;
+            }).join('')}
+
+            ${Array.from({ length: blankRowsCount }).map((_, i) => `
+              <tr style="height: 24px;">
+                <td class="text-center" style="color: #cbd5e1;">${enrolledList.length + i + 1}</td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td class="text-center"><span class="check-box"></span></td>
+                <td></td>
+                <td></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <div class="footer-box">
+          <div class="print-time">
+            Feuille d'émargement générée le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}
+            <br>
+            Application Association Sportive Rosa Parks
+          </div>
+          <div class="sign-box">
+            <strong>Visa & Signature de l'enseignant EPS :</strong>
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            window.focus();
+            window.print();
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   const handleDropPdfOnSheet = async (file: File) => {
     if (!activeSession) {
@@ -614,6 +1010,103 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
     }
   };
 
+  // Pointer un élève directement depuis "Tous les élèves" (en 1 clic : inscrit + présent)
+  const quickToggleDirectAttendance = async (studentId: string) => {
+    if (!activeSession) return;
+    const enrolled = new Set<string>(activeSession.enrolledStudentIds || []);
+    const present = new Set<string>(activeSession.presentStudentIds || []);
+
+    const isAlreadyEnrolled = enrolled.has(studentId);
+    const isAlreadyPresent = present.has(studentId);
+
+    if (isAlreadyPresent) {
+      // Dépointer
+      present.delete(studentId);
+    } else {
+      if (!isAlreadyEnrolled) {
+        if (activeSession.requirePaid) {
+          const student = students.find(s => s.id === studentId);
+          if (student && String(student.paid).toUpperCase() !== 'OUI') {
+            const proceed = confirm(`Attention : ${student.firstName} ${student.lastName} n'est pas à jour de cotisation (paiement non validé).\nVoulez-vous tout de même l'inscrire et le pointer présent ?`);
+            if (!proceed) return;
+          }
+        }
+        enrolled.add(studentId);
+      }
+      present.add(studentId);
+    }
+
+    const newEnrolledIds = Array.from(enrolled);
+    const newPresentIds = Array.from(present);
+
+    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+      ...s,
+      enrolledStudentIds: newEnrolledIds,
+      presentStudentIds: newPresentIds
+    } : s));
+
+    try {
+      await saveSessionApi({
+        ...activeSession,
+        id: activeSession.id,
+        enrolledStudentIds: newEnrolledIds,
+        presentStudentIds: newPresentIds
+      });
+      if (activeSession.convocationId) {
+        await saveConvocationApi({
+          id: activeSession.convocationId,
+          studentIds: newEnrolledIds
+        });
+      }
+      await fetchSessionManagerData();
+      setNotification(isAlreadyPresent ? "Élève dépointé (marqué absent)" : "✅ Élève pointé PRÉSENT à la séance");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Pointer tous les inscrits comme présents en un clic
+  const markAllPresent = async () => {
+    if (!activeSession || !activeSession.enrolledStudentIds || activeSession.enrolledStudentIds.length === 0) return;
+    const newPresentIds = Array.from(new Set(activeSession.enrolledStudentIds));
+    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+      ...s,
+      presentStudentIds: newPresentIds
+    } : s));
+    try {
+      await saveSessionApi({
+        ...activeSession,
+        id: activeSession.id,
+        presentStudentIds: newPresentIds
+      });
+      await fetchSessionManagerData();
+      setNotification(`✅ Tous les inscrits (${newPresentIds.length}) ont été pointés présents.`);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Réinitialiser le pointage (tous absents)
+  const markAllAbsent = async () => {
+    if (!activeSession) return;
+    if (!confirm("Voulez-vous réinitialiser l'appel et marquer tous les élèves absents sur cette séance ?")) return;
+    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+      ...s,
+      presentStudentIds: []
+    } : s));
+    try {
+      await saveSessionApi({
+        ...activeSession,
+        id: activeSession.id,
+        presentStudentIds: []
+      });
+      await fetchSessionManagerData();
+      setNotification("Pointage d'appel réinitialisé (tous absents).");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const filteredStudents = useMemo(() => {
     return students.filter(student => {
       const searchLower = searchTerm.toLowerCase();
@@ -623,13 +1116,37 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                             
       if (!matchesSearch) return false;
       
-      const audience = formData.targetAudience || 'all';
+      const audience = (activeSession?.targetAudience || formData.targetAudience || 'all');
       if (audience === 'students' && student.isAdult) return false;
       if (audience === 'adults' && !student.isAdult) return false;
       
       return true;
     });
-  }, [students, searchTerm, formData.targetAudience]);
+  }, [students, searchTerm, activeSession?.targetAudience, formData.targetAudience]);
+
+  // Liste des élèves inscrits pour le pointage d'appel (avec filtre présent/absent et recherche interne)
+  const activeEnrolledStudents = useMemo(() => {
+    if (!activeSession) return [];
+    const enrolledIds = new Set(activeSession.enrolledStudentIds || []);
+    const presentIds = new Set(activeSession.presentStudentIds || []);
+    
+    return students
+      .filter(s => enrolledIds.has(s.id))
+      .filter(s => {
+        if (attendanceStatusFilter === 'present' && !presentIds.has(s.id)) return false;
+        if (attendanceStatusFilter === 'absent' && presentIds.has(s.id)) return false;
+        if (!attendanceSearch.trim()) return true;
+        const q = attendanceSearch.trim().toLowerCase();
+        return (s.lastName || '').toLowerCase().includes(q) ||
+               (s.firstName || '').toLowerCase().includes(q) ||
+               (s.classGroup || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const clsCmp = (a.classGroup || '').localeCompare(b.classGroup || '');
+        if (clsCmp !== 0) return clsCmp;
+        return (a.lastName || '').localeCompare(b.lastName || '');
+      });
+  }, [activeSession, students, attendanceStatusFilter, attendanceSearch]);
 
   // Partitionnement chronologique et par catégorie :
   // Colonne 1 : AS du Soir (Mardi ou Jeudi, 17h00 - 18h00, récurrents)
@@ -804,7 +1321,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <div className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
               isPast 
                 ? 'bg-slate-100 border-slate-200 text-slate-600' 
@@ -814,6 +1331,14 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
             }`} title="Présents / Inscrits">
               {(s.presentStudentIds || []).length} / {(s.enrolledStudentIds || []).length}
             </div>
+            <button 
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handlePrintSession(s); }} 
+              className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" 
+              title="Imprimer la feuille d'appel de cette séance"
+            >
+              <Printer className="w-3.5 h-3.5" />
+            </button>
             <button 
               type="button"
               onClick={(e) => { e.stopPropagation(); setSessionToDelete(s.id); }} 
@@ -897,6 +1422,46 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
               className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500" 
             />
           </div>
+
+          {/* Filtre temporel : À venir / Passés (Historique) / Tous */}
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setTimeFilter('upcoming')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                timeFilter === 'upcoming'
+                  ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>À venir ({asSoirUpcoming.length + mercrediUpcoming.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTimeFilter('past')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                timeFilter === 'past'
+                  ? 'bg-amber-600 text-white shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Passés ({asSoirPast.length + mercrediPast.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTimeFilter('all')}
+              className={`flex-1 py-1.5 px-2 rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                timeFilter === 'all'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Tous</span>
+            </button>
+          </div>
         </div>
 
         {/* CONTENEUR DES COLONNES */}
@@ -921,9 +1486,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                       <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-800 font-bold border border-purple-200">
                         {totalAsSoir}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200" title="Affichage limité d'une semaine à l'autre pour ne pas surcharger le calendrier">
-                        D'une semaine à l'autre
-                      </span>
+                      {timeFilter === 'past' ? (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-200">
+                          Créneaux passés ({asSoirPast.length})
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200" title="Affichage limité d'une semaine à l'autre pour ne pas surcharger le calendrier">
+                          D'une semaine à l'autre
+                        </span>
+                      )}
                     </h3>
                     <p className="text-[10px] font-semibold text-purple-700">
                       Mardi ou Jeudi (17h00 - 18h00) • Récurrents
@@ -942,70 +1513,109 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
 
               {/* Liste des séances AS du Soir */}
               <div className="overflow-y-auto flex-1 p-2 space-y-3">
-                {/* Séances à venir AS du Soir */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between px-2 pt-1 pb-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-purple-600 inline-block animate-pulse"></span>
-                      À venir ({asSoirUpcoming.length})
-                    </span>
-                    {!showLaterAsSoir && (
-                      <span className="text-[10px] font-medium text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
-                        Semaine en cours & suivante
+                {/* 1. Mode exclusif Séances Passées */}
+                {timeFilter === 'past' && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-amber-600" />
+                        Créneaux passés ({asSoirPast.length})
                       </span>
+                      <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                        Plus récents en premier
+                      </span>
+                    </div>
+
+                    {displayedAsSoirPast.map(s => renderSessionCard(s, true))}
+
+                    {asSoirPast.length === 0 && (
+                      <div className="p-3 text-center text-xs text-amber-800/60 bg-amber-50/40 rounded-lg border border-dashed border-amber-200">
+                        Aucun créneau passé pour le moment.
+                      </div>
                     )}
                   </div>
+                )}
 
-                  {asSoirUpcoming.map(s => renderSessionCard(s, false))}
-
-                  {asSoirUpcoming.length === 0 && (
-                    <div className="p-3 text-center text-xs text-purple-800/60 bg-purple-50/40 rounded-lg border border-dashed border-purple-200">
-                      Aucun créneau du soir programmé.
+                {/* 2. Mode À venir ou Tous */}
+                {timeFilter !== 'past' && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-purple-900 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-purple-600 inline-block animate-pulse"></span>
+                        À venir ({asSoirUpcoming.length})
+                      </span>
+                      {!showLaterAsSoir && (
+                        <span className="text-[10px] font-medium text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                          Semaine en cours & suivante
+                        </span>
+                      )}
                     </div>
-                  )}
 
-                  {/* Semaines ultérieures masquées par défaut pour ne pas surcharger */}
-                  {asSoirUpcomingLater.length > 0 && !showLaterAsSoir && (
-                    <div className="pt-2 border-t border-purple-100">
-                      <button
-                        type="button"
-                        onClick={() => setShowLaterAsSoir(true)}
-                        className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-50/70 hover:bg-purple-100 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
-                          <span>Semaines suivantes ({asSoirUpcomingLater.length} masquées)</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] text-purple-700">
-                          <span>Afficher tout</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
+                    {asSoirUpcoming.map(s => renderSessionCard(s, false))}
+
+                    {asSoirUpcoming.length === 0 && (
+                      <div className="p-3 text-center text-xs text-purple-800/60 bg-purple-50/40 rounded-lg border border-dashed border-purple-200">
+                        Aucun créneau du soir à venir programmé.
+                      </div>
+                    )}
+
+                    {/* Semaines ultérieures masquées par défaut pour ne pas surcharger */}
+                    {asSoirUpcomingLater.length > 0 && !showLaterAsSoir && (
+                      <div className="pt-2 border-t border-purple-100">
+                        <button
+                          type="button"
+                          onClick={() => setShowLaterAsSoir(true)}
+                          className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-50/70 hover:bg-purple-100 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                            <span>Semaines suivantes ({asSoirUpcomingLater.length} masquées)</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-purple-700">
+                            <span>Afficher tout</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </div>
+                        </button>
+                      </div>
+                    )}
+
+                    {showLaterAsSoir && asSoirUpcomingLater.length > 0 && (
+                      <div className="pt-2 border-t border-purple-100">
+                        <button
+                          type="button"
+                          onClick={() => setShowLaterAsSoir(false)}
+                          className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-100/70 hover:bg-purple-200/70 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                            <span>Semaines suivantes ({asSoirUpcomingLater.length} affichées)</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-purple-700">
+                            <span>Replier (d'une semaine à l'autre)</span>
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Section Passées quand timeFilter === 'all' ou replié quand 'upcoming' */}
+                {timeFilter === 'all' && asSoirPast.length > 0 && (
+                  <div className="pt-3 border-t border-purple-200">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1 mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-purple-600" />
+                        Historique passées ({asSoirPast.length})
+                      </span>
                     </div>
-                  )}
-
-                  {showLaterAsSoir && asSoirUpcomingLater.length > 0 && (
-                    <div className="pt-2 border-t border-purple-100">
-                      <button
-                        type="button"
-                        onClick={() => setShowLaterAsSoir(false)}
-                        className="w-full flex items-center justify-between p-2 rounded-lg bg-purple-100/70 hover:bg-purple-200/70 text-purple-900 text-xs font-bold border border-purple-200 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
-                          <span>Semaines suivantes ({asSoirUpcomingLater.length} affichées)</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-[10px] text-purple-700">
-                          <span>Replier (d'une semaine à l'autre)</span>
-                          <ChevronDown className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
+                    <div className="space-y-1.5">
+                      {displayedAsSoirPast.map(s => renderSessionCard(s, true))}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
-                {/* Historique des séances passées AS du Soir */}
-                {asSoirPast.length > 0 && (
+                {timeFilter === 'upcoming' && asSoirPast.length > 0 && (
                   <div className="pt-2 border-t border-purple-100">
                     <button
                       type="button"
@@ -1014,7 +1624,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                     >
                       <div className="flex items-center gap-1.5">
                         <History className="w-3.5 h-3.5 text-purple-600" />
-                        <span>Historique ({asSoirPast.length})</span>
+                        <span>Historique passées ({asSoirPast.length})</span>
                       </div>
                       {isAsSoirHistoryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     </button>
@@ -1047,6 +1657,11 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                       <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 font-bold border border-blue-200">
                         {totalMercredi}
                       </span>
+                      {timeFilter === 'past' && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-200">
+                          Créneaux passés ({mercrediPast.length})
+                        </span>
+                      )}
                     </h3>
                     <p className="text-[10px] font-semibold text-blue-700">
                       Mercredi • Créneaux ponctuels
@@ -1065,26 +1680,65 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
 
               {/* Liste des séances Mercredi */}
               <div className="overflow-y-auto flex-1 p-2 space-y-3">
-                {/* Séances à venir Mercredi */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between px-2 pt-1 pb-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
-                      À venir ({mercrediUpcoming.length})
-                    </span>
-                  </div>
-
-                  {mercrediUpcoming.map(s => renderSessionCard(s, false))}
-
-                  {mercrediUpcoming.length === 0 && (
-                    <div className="p-3 text-center text-xs text-blue-800/60 bg-blue-50/40 rounded-lg border border-dashed border-blue-200">
-                      Aucune séance du mercredi programmée.
+                {/* 1. Mode exclusif Séances Passées */}
+                {timeFilter === 'past' && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-amber-600" />
+                        Créneaux passés ({mercrediPast.length})
+                      </span>
+                      <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                        Plus récents en premier
+                      </span>
                     </div>
-                  )}
-                </div>
 
-                {/* Historique des séances passées Mercredi */}
-                {mercrediPast.length > 0 && (
+                    {displayedMercrediPast.map(s => renderSessionCard(s, true))}
+
+                    {mercrediPast.length === 0 && (
+                      <div className="p-3 text-center text-xs text-amber-800/60 bg-amber-50/40 rounded-lg border border-dashed border-amber-200">
+                        Aucune séance passée du mercredi.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 2. Mode À venir ou Tous */}
+                {timeFilter !== 'past' && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
+                        À venir ({mercrediUpcoming.length})
+                      </span>
+                    </div>
+
+                    {mercrediUpcoming.map(s => renderSessionCard(s, false))}
+
+                    {mercrediUpcoming.length === 0 && (
+                      <div className="p-3 text-center text-xs text-blue-800/60 bg-blue-50/40 rounded-lg border border-dashed border-blue-200">
+                        Aucune séance du mercredi à venir.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Section Passées quand timeFilter === 'all' ou replié quand 'upcoming' */}
+                {timeFilter === 'all' && mercrediPast.length > 0 && (
+                  <div className="pt-3 border-t border-blue-200">
+                    <div className="flex items-center justify-between px-2 pt-1 pb-1 mb-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                        <History className="w-3.5 h-3.5 text-blue-600" />
+                        Historique passées ({mercrediPast.length})
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {displayedMercrediPast.map(s => renderSessionCard(s, true))}
+                    </div>
+                  </div>
+                )}
+
+                {timeFilter === 'upcoming' && mercrediPast.length > 0 && (
                   <div className="pt-2 border-t border-blue-100">
                     <button
                       type="button"
@@ -1093,7 +1747,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                     >
                       <div className="flex items-center gap-1.5">
                         <History className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Historique ({mercrediPast.length})</span>
+                        <span>Historique passées ({mercrediPast.length})</span>
                       </div>
                       {isMercrediHistoryOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     </button>
@@ -2337,7 +2991,16 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                 </button>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
+                <button 
+                  type="button"
+                  onClick={() => handlePrintSession(activeSession)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                  title="Imprimer la feuille d'appel & d'émargement de cette séance"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Imprimer la feuille</span>
+                </button>
                 <button 
                   onClick={() => openEditForm(activeSession)}
                   className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors cursor-pointer border border-indigo-100 hover:border-indigo-300"
@@ -2356,6 +3019,32 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
             </div>
             
             <div className="p-6 flex-1 flex flex-col overflow-hidden">
+              {/* BANNIÈRE CRÉNEAU PASSÉ */}
+              {activeSession.date < todayStr && (
+                <div className="mb-4 p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-amber-200 text-amber-900 flex items-center justify-center shrink-0">
+                      <History className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-black text-xs uppercase tracking-wide text-amber-900 block">
+                        📜 Créneau passé • Pointage d'appel & Historique d'émargement
+                      </span>
+                      <span className="text-xs font-medium text-amber-800">
+                        Vous pouvez compléter le listing des inscrits, rectifier les pointages de présence et imprimer la feuille officielle.
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handlePrintSession(activeSession)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Imprimer le bilan</span>
+                  </button>
+                </div>
+              )}
               {/* ZONE DU DOCUMENT JOINT (PDF) SUR LA FEUILLE DE SÉANCE */}
               <div className="mb-5 shrink-0">
                 <div className="flex items-center justify-between mb-1.5">
@@ -2590,48 +3279,120 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 overflow-hidden">
                 
-                {/* List of enrolled students */}
-                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl">
-                  <div className="bg-slate-100 p-3 border-b border-slate-200 font-semibold text-slate-700 flex justify-between">
-                    <span>Pointage des présents</span>
-                    <span className="bg-white px-2 py-0.5 rounded text-xs border border-slate-200">
-                      {(activeSession.presentStudentIds || []).length} / {(activeSession.enrolledStudentIds || []).length} présents
-                    </span>
+                {/* List of enrolled students with attendance controls */}
+                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                  <div className="bg-slate-100 p-3 border-b border-slate-200 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-800 text-sm">Pointage d'appel</span>
+                        <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border border-slate-200 text-indigo-700">
+                          {(activeSession.presentStudentIds || []).length} / {(activeSession.enrolledStudentIds || []).length} présents
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={markAllPresent}
+                          disabled={!activeSession.enrolledStudentIds || activeSession.enrolledStudentIds.length === 0}
+                          className="px-2 py-1 text-[11px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          title="Pointer tous les élèves inscrits comme présents"
+                        >
+                          Tout pointer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={markAllAbsent}
+                          disabled={!activeSession.presentStudentIds || activeSession.presentStudentIds.length === 0}
+                          className="px-2 py-1 text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          title="Réinitialiser le pointage (marquer tous absents)"
+                        >
+                          Réinitialiser
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filtres internes Présents / Absents / Tous & recherche rapide */}
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1 border-t border-slate-200/60">
+                      <div className="flex bg-white rounded-lg p-0.5 border border-slate-200 text-[11px] font-bold shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setAttendanceStatusFilter('all')}
+                          className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                            attendanceStatusFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Tous ({(activeSession.enrolledStudentIds || []).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAttendanceStatusFilter('present')}
+                          className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                            attendanceStatusFilter === 'present' ? 'bg-emerald-600 text-white' : 'text-emerald-700 hover:bg-emerald-50'
+                          }`}
+                        >
+                          Présents ({(activeSession.presentStudentIds || []).length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAttendanceStatusFilter('absent')}
+                          className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                            attendanceStatusFilter === 'absent' ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'
+                          }`}
+                        >
+                          Absents ({Math.max(0, (activeSession.enrolledStudentIds || []).length - (activeSession.presentStudentIds || []).length)})
+                        </button>
+                      </div>
+
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          placeholder="Filtrer les inscrits..."
+                          value={attendanceSearch}
+                          onChange={e => setAttendanceSearch(e.target.value)}
+                          className="w-full pl-7 pr-2 py-1 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5 pointer-events-none" />
+                      </div>
+                    </div>
                   </div>
-                  <div className="overflow-y-auto flex-1 p-2 space-y-1">
-                    {filteredStudents.filter(s => (activeSession.enrolledStudentIds || []).includes(s.id)).map(s => {
+
+                  <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[300px]">
+                    {activeEnrolledStudents.map(s => {
                       const isPresent = (activeSession.presentStudentIds || []).includes(s.id);
                       return (
-                        <div key={`enrolled_${s.id}`} className={`flex items-center justify-between p-2 rounded-lg border ${isPresent ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100'} hover:border-slate-300 transition-colors`}>
-                          <div className="flex items-center gap-3">
+                        <div key={`enrolled_${s.id}`} className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                          isPresent ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs' : 'bg-white border-slate-200 hover:border-slate-300'
+                        }`}>
+                          <div className="flex items-center gap-3 min-w-0">
                             <button 
+                              type="button"
                               onClick={() => toggleAttendance(s.id)}
-                              className={`p-1 rounded-full transition-colors ${isPresent ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-400'}`}
+                              className={`p-1 rounded-full transition-transform active:scale-90 cursor-pointer ${
+                                isPresent ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-500'
+                              }`}
+                              title={isPresent ? "Cliquer pour marquer absent" : "Cliquer pour marquer présent"}
                             >
                               {isPresent ? <CheckCircle2 className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
                             </button>
-                            <div>
-                              <div className="font-semibold text-slate-800 flex items-center gap-1 flex-wrap">
-                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-sm text-rose-500 leading-none">AP🚫</span>}
-                                {String(s.swimmingCertificate).toUpperCase() !== 'OUI' && <span title="Savoir nager non validé" className="text-sm">🏊‍♂️🚫</span>}
-                                {String(s.imageRights).toUpperCase() !== 'OUI' && <span title="Droit à l'image non validé" className="text-sm">📷🚫</span>}
-                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Paiement manquant" className="text-sm text-rose-500 font-bold leading-none">€🚫</span>}
-                                {activeSession.requirePaid && (
-                                  String(s.paid).toUpperCase() === 'OUI' ? (
-                                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-300">Cotisation OK ✓</span>
-                                  ) : (
-                                    <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-rose-300">Cotisation non payée ⚠️</span>
-                                  )
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                <span className="truncate">{s.lastName} {s.firstName}</span>
+                                {isPresent && (
+                                  <span className="bg-emerald-200 text-emerald-900 text-[10px] font-black px-1.5 py-0.2 rounded uppercase">
+                                    Présent ✓
+                                  </span>
                                 )}
-                                <span>{s.lastName} {s.firstName}</span>
+                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
                               </div>
-                              <span className="text-xs text-slate-500">{s.classGroup}</span>
+                              <span className="text-xs text-slate-500">{s.classGroup || 'Sans classe'}</span>
                             </div>
                           </div>
                           <button 
+                            type="button"
                             onClick={() => toggleEnrollment(s.id)}
-                            className="text-xs text-slate-400 hover:text-red-500 px-2 py-1"
-                            title="Désinscrire"
+                            className="text-xs text-slate-400 hover:text-red-600 hover:bg-red-50 rounded px-2 py-1 transition-colors shrink-0 cursor-pointer"
+                            title="Désinscrire de la séance"
                           >
                             Retirer
                           </button>
@@ -2639,44 +3400,80 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all' }
                       );
                     })}
                     {(activeSession.enrolledStudentIds || []).length === 0 && (
-                      <p className="text-center text-slate-500 py-8 text-sm">Aucun élève inscrit pour cette séance. Sélectionnez-les dans la liste de droite.</p>
+                      <div className="p-8 text-center space-y-2">
+                        <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                        <p className="text-sm font-semibold text-slate-600">Aucun élève inscrit sur cette séance</p>
+                        <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                          Utilisez la liste de droite pour inscrire des élèves ou les pointer directement présents en 1 clic.
+                        </p>
+                      </div>
+                    )}
+                    {(activeSession.enrolledStudentIds || []).length > 0 && activeEnrolledStudents.length === 0 && (
+                      <p className="text-center text-slate-400 py-6 text-xs italic">
+                        Aucun inscrit ne correspond au filtre sélectionné.
+                      </p>
                     )}
                   </div>
                 </div>
 
                 {/* List of non-enrolled students (Database) */}
-                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl">
-                  <div className="bg-slate-50 p-3 border-b border-slate-200 font-semibold text-slate-700">
-                    Tous les élèves ({filteredStudents.length})
+                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                  <div className="bg-slate-50 p-3 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <span className="font-bold text-slate-700 text-sm">
+                      Tous les élèves ({filteredStudents.length})
+                    </span>
+                    <span className="text-[10px] text-indigo-700 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                      💡 Cliquez sur « Pointer présent » pour inscrire + valider en 1 clic
+                    </span>
                   </div>
-                  <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                  <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[300px]">
                     {filteredStudents.map(s => {
                       const isEnrolled = (activeSession.enrolledStudentIds || []).includes(s.id);
+                      const isPresent = (activeSession.presentStudentIds || []).includes(s.id);
+
                       return (
-                        <div key={`all_${s.id}`} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-lg transition-colors border border-transparent hover:border-slate-100">
-                          <div>
-                            <div className="font-medium text-slate-700 flex items-center gap-1 flex-wrap">
-                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-sm text-rose-500 leading-none">AP🚫</span>}
-                                {String(s.swimmingCertificate).toUpperCase() !== 'OUI' && <span title="Savoir nager non validé" className="text-sm">🏊‍♂️🚫</span>}
-                                {String(s.imageRights).toUpperCase() !== 'OUI' && <span title="Droit à l'image non validé" className="text-sm">📷🚫</span>}
-                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Paiement manquant" className="text-sm text-rose-500 font-bold leading-none">€🚫</span>}
-                                {activeSession.requirePaid && (
-                                  String(s.paid).toUpperCase() === 'OUI' ? (
-                                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-300">Cotisation OK ✓</span>
-                                  ) : (
-                                    <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-rose-300">Cotisation non payée ⚠️</span>
-                                  )
-                                )}
-                                <span>{s.lastName} {s.firstName}</span>
+                        <div key={`all_${s.id}`} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-lg transition-colors border border-transparent hover:border-slate-200 gap-2">
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold truncate">{s.lastName} {s.firstName}</span>
+                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
                             </div>
-                            <span className="text-xs text-slate-400">{s.classGroup}</span>
+                            <span className="text-xs text-slate-400">{s.classGroup || 'Sans classe'}</span>
                           </div>
-                          <button 
-                            onClick={() => toggleEnrollment(s.id)}
-                            className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${isEnrolled ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                          >
-                            {isEnrolled ? 'Inscrit' : 'Inscrire'}
-                          </button>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Bouton Appel Direct (Inscrire + Pointer présent en un clic) */}
+                            <button
+                              type="button"
+                              onClick={() => quickToggleDirectAttendance(s.id)}
+                              className={`text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                isPresent
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                                  : isEnrolled
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-xs'
+                              }`}
+                              title={isPresent ? "Cliquer pour retirer des présents" : "Pointer présent à cette séance (inscrit automatiquement)"}
+                            >
+                              {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                              <span>{isPresent ? 'Présent ✓' : 'Pointer présent'}</span>
+                            </button>
+
+                            {/* Bouton Inscription simple */}
+                            <button 
+                              type="button"
+                              onClick={() => toggleEnrollment(s.id)}
+                              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                                isEnrolled 
+                                  ? 'bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-600' 
+                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                              }`}
+                              title={isEnrolled ? "Désinscrire de la séance" : "Inscrire sans pointer présent"}
+                            >
+                              {isEnrolled ? 'Désinscrire' : 'Inscrire'}
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

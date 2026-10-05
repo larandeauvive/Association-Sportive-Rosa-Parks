@@ -723,8 +723,23 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
         const pdf = (existing.attachedPdf?.fileData ? existing.attachedPdf : null) ||
                     (s.attachedPdf?.fileData ? s.attachedPdf : null) ||
                     existing.attachedPdf || s.attachedPdf;
+        // Fusionner les élèves inscrits pour ne jamais perdre d'inscriptions
+        const mergedEnrolled = Array.from(new Set([
+          ...(existing.enrolledStudentIds || []),
+          ...(s.enrolledStudentIds || [])
+        ]));
+        const mergedPresent = Array.from(new Set([
+          ...(existing.presentStudentIds || []),
+          ...(s.presentStudentIds || [])
+        ]));
         // Priorité aux données du serveur pour éviter d'écraser avec du local périmé
-        map.set(s.id, { ...s, ...existing, attachedPdf: pdf });
+        map.set(s.id, {
+          ...s,
+          ...existing,
+          enrolledStudentIds: mergedEnrolled,
+          presentStudentIds: mergedPresent,
+          attachedPdf: pdf
+        });
       } else {
         map.set(s.id, s);
       }
@@ -732,6 +747,7 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
   }
   const result = Array.from(map.values());
   result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  setLocalSessions(result);
   return result;
 }
 
@@ -767,12 +783,19 @@ export const getSessionsList = async (schoolYear?: string): Promise<Session[]> =
             map.set(s.id, s);
           } else {
             const cur = map.get(s.id)!;
+            const mergedEnrolled = Array.from(new Set([
+              ...(cur.enrolledStudentIds || []),
+              ...(s.enrolledStudentIds || [])
+            ]));
+            const mergedPresent = Array.from(new Set([
+              ...(cur.presentStudentIds || []),
+              ...(s.presentStudentIds || [])
+            ]));
             map.set(s.id, {
               ...s,
               ...cur,
-              // Le serveur local / base Postgres fait autorité sur les listes récentes d'inscrits et de présents
-              enrolledStudentIds: cur.enrolledStudentIds !== undefined ? cur.enrolledStudentIds : s.enrolledStudentIds,
-              presentStudentIds: cur.presentStudentIds !== undefined ? cur.presentStudentIds : s.presentStudentIds,
+              enrolledStudentIds: mergedEnrolled,
+              presentStudentIds: mergedPresent,
               attachedPdf: cur.attachedPdf || s.attachedPdf
             });
           }
@@ -1155,11 +1178,26 @@ function mergeConvocationsWithLocal(remoteList: Convocation[], schoolYear?: stri
   for (const c of localList || []) {
     if (c && c.id) {
       const existing = map.get(c.id);
-      map.set(c.id, existing ? { ...existing, ...c } : c);
+      if (existing) {
+        // Fusionner les élèves inscrits/convoqués pour ne jamais perdre d'inscriptions
+        const mergedStudents = Array.from(new Set([
+          ...(existing.studentIds || []),
+          ...(c.studentIds || [])
+        ]));
+        // Priorité aux données du serveur pour éviter d'écraser avec du local périmé
+        map.set(c.id, {
+          ...c,
+          ...existing,
+          studentIds: mergedStudents
+        });
+      } else {
+        map.set(c.id, c);
+      }
     }
   }
   const result = Array.from(map.values());
   result.sort((a, b) => new Date(b.departureDate).getTime() - new Date(a.departureDate).getTime());
+  setLocalConvocations(result);
   return result;
 }
 
@@ -1182,13 +1220,17 @@ export const getConvocationsList = async (schoolYear?: string): Promise<Convocat
     }
   }
 
+  const map = new Map<string, Convocation>();
+
   const hasServer = await isApiServerAvailable();
   if (hasServer) {
     try {
       const queryStr = schoolYear ? `?schoolYear=${encodeURIComponent(schoolYear)}` : '';
       const serverList = await fetchJson<Convocation[]>(`${API_BASE}/convocations${queryStr}`);
-      if (serverList && serverList.length > 0) {
-        return mergeConvocationsWithLocal(serverList, schoolYear);
+      if (serverList && Array.isArray(serverList)) {
+        for (const c of serverList) {
+          if (c && c.id) map.set(c.id, c);
+        }
       }
     } catch {
       // fallback
@@ -1197,22 +1239,36 @@ export const getConvocationsList = async (schoolYear?: string): Promise<Convocat
 
   // Firestore Cloud
   try {
-    const snap = await getDocs(collection(firestoreDb, 'convocations'));
-    if (!snap.empty) {
-      const list: Convocation[] = [];
-      snap.forEach(d => {
+    const fsPromise = getDocs(collection(firestoreDb, 'convocations'));
+    const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2500));
+    const snap = await Promise.race([fsPromise, timeoutPromise]) as any;
+    if (snap && !snap.empty) {
+      snap.forEach((d: any) => {
         const c = rowToConvocation({ id: d.id, ...d.data() });
         if (!schoolYear || c.schoolYear === schoolYear) {
-          list.push(c);
+          if (!map.has(c.id)) {
+            map.set(c.id, c);
+          } else {
+            const cur = map.get(c.id)!;
+            const mergedStudents = Array.from(new Set([
+              ...(cur.studentIds || []),
+              ...(c.studentIds || [])
+            ]));
+            map.set(c.id, {
+              ...c,
+              ...cur,
+              studentIds: mergedStudents
+            });
+          }
         }
       });
-      list.sort((a, b) => b.departureDate.localeCompare(a.departureDate));
-      if (list.length > 0) {
-        return mergeConvocationsWithLocal(list, schoolYear);
-      }
     }
   } catch (fsErr) {
-    console.warn('Firestore getConvocationsList error:', fsErr);
+    // Timeout ou hors-ligne
+  }
+
+  if (map.size > 0) {
+    return mergeConvocationsWithLocal(Array.from(map.values()), schoolYear);
   }
 
   return getLocalConvocations(schoolYear);

@@ -558,6 +558,34 @@ export async function getConvocations(schoolYear?: string): Promise<Convocation[
   }
 }
 
+export async function getConvocationById(id: string): Promise<Convocation | null> {
+  try {
+    const rows = await db.select().from(convocations).where(eq(convocations.id, id));
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      ...r,
+      guides: r.guides ?? '',
+      teacherIds: r.teacherIds ?? [],
+      needSnack: r.needSnack ?? 'NON',
+      needPicnic: r.needPicnic ?? 'NON',
+      studentIds: r.studentIds ?? [],
+      tshirtManagerId: r.tshirtManagerId ?? undefined,
+      snackManagerIds: r.snackManagerIds ?? [],
+      sessionId: r.sessionId ?? undefined,
+      targetAudience: (r.targetAudience as any) ?? 'students',
+      meetingTime: r.meetingTime ?? undefined,
+      meetingLocation: r.meetingLocation ?? undefined,
+      cafeteriaTime: r.cafeteriaTime ?? undefined,
+      returnTime: r.returnTime ?? undefined,
+      selectedCriteria: r.selectedCriteria ?? undefined,
+    } as Convocation;
+  } catch (error) {
+    console.error("Failed to query convocation by id:", error);
+    return null;
+  }
+}
+
 export async function createConvocation(data: Omit<Convocation, 'id'> & { id?: string }): Promise<string> {
   try {
     const id = data.id || ('cnv_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36));

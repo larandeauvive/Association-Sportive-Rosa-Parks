@@ -24,6 +24,7 @@ import {
   updateSessionById,
   deleteSessionById,
   getConvocations,
+  getConvocationById,
   createConvocation,
   updateConvocationById,
   deleteConvocationById,
@@ -356,6 +357,25 @@ async function startServer() {
   app.put('/api/sessions/:id', async (req, res) => {
     try {
       await updateSessionById(req.params.id, req.body);
+      
+      // Synchronisation bidirectionnelle avec la convocation liée
+      try {
+        const session = await getSessionById(req.params.id);
+        if (session) {
+          const allConvs = await getConvocations(session.schoolYear);
+          const linkedConvs = allConvs.filter(c => c.sessionId === req.params.id || c.id === session.convocationId);
+          
+          if (req.body.enrolledStudentIds !== undefined && Array.isArray(req.body.enrolledStudentIds)) {
+            for (const c of linkedConvs) {
+              const merged = Array.from(new Set([...(c.studentIds || []), ...req.body.enrolledStudentIds]));
+              await updateConvocationById(c.id, { studentIds: merged });
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Erreur synchronisation convocation depuis session:', syncErr);
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -581,7 +601,49 @@ async function startServer() {
 
   app.put('/api/convocations/:id', async (req, res) => {
     try {
-      await updateConvocationById(req.params.id, req.body);
+      const existingConv = await getConvocationById(req.params.id);
+      const schoolYear = req.body.schoolYear || existingConv?.schoolYear;
+      const allSessions = schoolYear ? await getSessions(schoolYear) : [];
+      const linkedSession = allSessions.find(s => 
+        s.convocationId === req.params.id || 
+        s.id === existingConv?.sessionId || 
+        s.id === req.body.sessionId
+      );
+
+      // Si req.body.studentIds n'est pas fourni ou est vide, mais qu'il y a déjà des élèves dans la convocation ou la séance liée, les préserver
+      let finalStudentIds = req.body.studentIds;
+      if (finalStudentIds === undefined || (Array.isArray(finalStudentIds) && finalStudentIds.length === 0)) {
+        if (existingConv?.studentIds && existingConv.studentIds.length > 0) {
+          finalStudentIds = existingConv.studentIds;
+        } else if (linkedSession?.enrolledStudentIds && linkedSession.enrolledStudentIds.length > 0) {
+          finalStudentIds = linkedSession.enrolledStudentIds;
+        }
+      }
+
+      const updatePayload = {
+        ...req.body,
+        sessionId: req.body.sessionId || linkedSession?.id || existingConv?.sessionId,
+        ...(finalStudentIds !== undefined ? { studentIds: finalStudentIds } : {})
+      };
+      await updateConvocationById(req.params.id, updatePayload);
+
+      // Synchronisation automatique et bidirectionnelle avec la séance liée sans jamais perdre d'inscrits
+      try {
+        if (linkedSession) {
+          const studentsToSync = finalStudentIds || existingConv?.studentIds || [];
+          const mergedSessionEnrolled = Array.from(new Set([
+            ...(linkedSession.enrolledStudentIds || []),
+            ...studentsToSync
+          ]));
+          await updateSessionById(linkedSession.id, { 
+            enrolledStudentIds: mergedSessionEnrolled,
+            convocationId: req.params.id
+          });
+        }
+      } catch (syncErr) {
+        console.warn('Erreur synchronisation séance depuis convocation:', syncErr);
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

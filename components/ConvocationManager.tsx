@@ -110,10 +110,15 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
       ...(linkedSession?.enrolledStudentIds || [])
     ]));
 
-    setActiveConvocation(conv);
-    setFormData({
+    const convToEdit: Convocation = {
       ...conv,
-      studentIds: initialStudentIds,
+      sessionId: conv.sessionId || linkedSession?.id,
+      studentIds: initialStudentIds
+    };
+
+    setActiveConvocation(convToEdit);
+    setFormData({
+      ...convToEdit,
       selectedCriteria: conv.selectedCriteria && conv.selectedCriteria.length > 0 
         ? conv.selectedCriteria 
         : DEFAULT_CRITERIA_IDS
@@ -128,7 +133,11 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
       ...(conv.studentIds || []),
       ...(linkedSession?.enrolledStudentIds || [])
     ]));
-    setActiveConvocation({ ...conv, studentIds: mergedIds });
+    setActiveConvocation({ 
+      ...conv, 
+      sessionId: conv.sessionId || linkedSession?.id,
+      studentIds: mergedIds 
+    });
     setIsEditing(false);
   };
 
@@ -166,28 +175,58 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
       const snackManagerIds = (formData.snackManagerIds || []).filter(id => selectedStudentIds.has(id));
 
       const finalStudentIds: string[] = Array.from(selectedStudentIds);
+
+      // Trouver la séance liée pour s'assurer qu'aucune inscription n'est jamais perdue
+      const linkedSession = sessions.find(s => 
+        (formData.sessionId && s.id === formData.sessionId) || 
+        (activeConvocation && (s.convocationId === activeConvocation.id || s.id === activeConvocation.sessionId))
+      );
+      const targetSessionId = formData.sessionId || linkedSession?.id;
+
+      // Si aucun élève n'a été spécifiquement coché dans le formulaire (ex: modification rapide d'horaires/lieu),
+      // conserver précieusement les élèves déjà inscrits dans la convocation ou la séance liée
+      let studentsToPersist = finalStudentIds;
+      if (studentsToPersist.length === 0) {
+        if (activeConvocation?.studentIds && activeConvocation.studentIds.length > 0) {
+          studentsToPersist = activeConvocation.studentIds;
+        } else if (linkedSession?.enrolledStudentIds && linkedSession.enrolledStudentIds.length > 0) {
+          studentsToPersist = linkedSession.enrolledStudentIds;
+        }
+      }
+
       const dataToSave: any = {
         ...formData,
+        sessionId: targetSessionId || formData.sessionId || undefined,
         tshirtManagerId,
         snackManagerIds,
-        studentIds: finalStudentIds,
+        studentIds: studentsToPersist,
         selectedCriteria: formData.selectedCriteria && formData.selectedCriteria.length > 0 
           ? formData.selectedCriteria 
           : DEFAULT_CRITERIA_IDS,
-        schoolYear: activeYear
+        schoolYear: formData.schoolYear || activeYear
       };
 
+      let savedConvId = activeConvocation?.id;
       if (activeConvocation) {
         await saveConvocationApi({ ...dataToSave, id: activeConvocation.id });
-        if (dataToSave.sessionId) {
-          await saveSessionApi({
-            id: dataToSave.sessionId,
-            enrolledStudentIds: finalStudentIds
-          });
-        }
       } else {
-        await saveConvocationApi(dataToSave);
+        const res = await saveConvocationApi(dataToSave);
+        savedConvId = res?.id;
       }
+
+      // Synchroniser la séance liée sans JAMAIS effacer sa liste d'inscrits
+      if (targetSessionId) {
+        const mergedSessionEnrolled = Array.from(new Set([
+          ...(linkedSession?.enrolledStudentIds || []),
+          ...studentsToPersist
+        ]));
+        await saveSessionApi({
+          id: targetSessionId,
+          enrolledStudentIds: mergedSessionEnrolled,
+          convocationId: savedConvId || undefined
+        });
+      }
+
       setIsEditing(false);
       setActiveConvocation(null);
       await fetchConvocationsData();

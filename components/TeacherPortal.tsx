@@ -6,7 +6,7 @@ import { StudentTable } from './StudentTable';
 import { ConvocationManager } from './ConvocationManager';
 import { TeacherManager } from './TeacherManager';
 import { StaffManager } from './StaffManager';
-import { CalendarDays, Users, Search, Activity, Printer, ClipboardList, GraduationCap, LogOut, Briefcase } from 'lucide-react';
+import { CalendarDays, Users, Search, Activity, Printer, ClipboardList, GraduationCap, LogOut, Briefcase, Moon, Zap, History } from 'lucide-react';
 import { formatDateFr } from '../lib/utils';
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
 }
 
 export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout }) => {
-  const [currentTab, setCurrentTab] = useState<'seances' | 'calendrier' | 'licences' | 'convocations' | 'enseignants' | 'personnel'>('seances');
+  const [currentTab, setCurrentTab] = useState<'as_soir' | 'mercredi' | 'seances' | 'historique' | 'calendrier' | 'licences' | 'convocations' | 'enseignants' | 'personnel'>('as_soir');
   const [searchTerm, setSearchTerm] = useState('');
   const [classFilter, setClassFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -149,7 +149,10 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
         {/* Navigation Tabs */}
         <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-6 bg-white/10 backdrop-blur-md p-1.5 rounded-xl border border-white/20 shadow-sm">
           {[
-            { id: 'seances', label: 'Appel / Séances', icon: Activity },
+            { id: 'as_soir', label: 'AS du Soir (Mardi / Jeudi)', icon: Moon },
+            { id: 'mercredi', label: 'Mercredi & Ponctuels', icon: Zap },
+            { id: 'seances', label: 'Toutes les Séances', icon: Activity },
+            { id: 'historique', label: 'Créneaux Passés', icon: History },
             { id: 'convocations', label: 'Convocations', icon: ClipboardList },
             { id: 'calendrier', label: 'Calendrier', icon: CalendarDays },
             { id: 'licences', label: 'État des Licences', icon: Users },
@@ -171,10 +174,12 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
           ))}
         </div>
 
-        {currentTab === 'seances' && (
+        {(currentTab === 'as_soir' || currentTab === 'mercredi' || currentTab === 'seances' || currentTab === 'historique') && (
           <SessionManager 
             students={students}
             activeYear={activeYear}
+            defaultCategory={currentTab === 'mercredi' ? 'mercredi' : currentTab === 'as_soir' ? 'as_soir' : 'all'}
+            initialTimeFilter={currentTab === 'historique' ? 'past' : undefined}
           />
         )}
 
@@ -189,7 +194,7 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
           <CalendarView 
             students={students}
             activeYear={activeYear}
-            isPublic={true}
+            isPublic={false}
           />
         )}
 

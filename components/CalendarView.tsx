@@ -647,6 +647,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setIsSavingEvent(true);
     try {
       if (editingEventId) {
+        const sessionDoc = events.find(ev => ev.id === editingEventId)?.raw as Session;
+        const existingEnrolled = sessionDoc?.enrolledStudentIds || [];
+        const existingPresent = sessionDoc?.presentStudentIds || [];
+        const existingTeams = sessionDoc?.teams || [];
+        const existingConvId = sessionDoc?.convocationId;
+
         const updateData = {
           name: newEventName || 'Séance',
           date: format(clickedDate, 'yyyy-MM-dd'),
@@ -672,14 +678,18 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || null) : null,
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || null) : null,
           directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null,
-          attachedPdf: (events.find(ev => ev.id === editingEventId)?.raw as Session)?.attachedPdf || null
+          attachedPdf: sessionDoc?.attachedPdf || null,
+          enrolledStudentIds: existingEnrolled,
+          presentStudentIds: existingPresent,
+          teams: existingTeams,
+          convocationId: existingConvId
         };
         await saveSessionApi({ ...updateData, id: editingEventId });
         
-        const sessionDoc = events.find(ev => ev.id === editingEventId)?.raw as Session;
-        if (sessionDoc?.convocationId) {
+        if (existingConvId) {
           const convUpdateData = {
-            id: sessionDoc.convocationId,
+            id: existingConvId,
+            sessionId: editingEventId,
             competitionName: newEventName || 'Séance',
             departureDate: format(clickedDate, 'yyyy-MM-dd') + (newEventTime ? `T${newEventTime}` : 'T13:30'),
             returnDate: format(clickedDate, 'yyyy-MM-dd') + (newEventEndTime ? `T${newEventEndTime}` : 'T17:00'),
@@ -687,7 +697,8 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             meetingTime: newEventMeetingTime,
             meetingLocation: newEventMeetingLocation,
             cafeteriaTime: newEventCafeteriaTime,
-            returnTime: newEventReturnTime
+            returnTime: newEventReturnTime,
+            studentIds: existingEnrolled
           };
           await saveConvocationApi(convUpdateData);
         }
