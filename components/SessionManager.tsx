@@ -5,7 +5,7 @@ import {
   PlusCircle, Calendar, Trash2, CheckCircle2, Circle, Users, 
   Save, Link2, Edit2, ShieldCheck, AlertCircle, Search,
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
-  Repeat, CalendarDays, Timer, Sparkles, Info, Lock,
+  Repeat, CalendarDays, Timer, Sparkles, Info, Lock, HelpCircle,
   FileText, FileUp, Download, Eye, X, Loader2,
   Moon, Zap, Layers, Printer
 } from 'lucide-react';
@@ -192,6 +192,9 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       const upcomingSess = pool.find(s => (s.date || '') > curDate);
       if (todaySess) return todaySess.id;
       if (upcomingSess) return upcomingSess.id;
+      // Fallback au créneau passé le plus récent pour que la sélection ne soit jamais vide
+      const latestPast = [...pool].reverse().find(s => (s.date || '') < curDate);
+      if (latestPast) return latestPast.id;
     }
 
     const todaySess = pool.find(s => s.date === curDate);
@@ -513,25 +516,37 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
           <thead>
             <tr>
               <th style="width: 25px;" class="text-center">N°</th>
-              <th style="width: 24%;">Nom</th>
-              <th style="width: 22%;">Prénom</th>
-              <th style="width: 60px;" class="text-center">Classe</th>
-              <th style="width: 70px;" class="text-center">Cotisation</th>
-              <th style="width: 90px;" class="text-center">Pointage</th>
+              <th style="width: ${sessionToPrint.survey?.enabled ? '20%' : '24%'};">Nom</th>
+              <th style="width: ${sessionToPrint.survey?.enabled ? '18%' : '22%'};">Prénom</th>
+              <th style="width: 55px;" class="text-center">Classe</th>
+              ${sessionToPrint.survey?.enabled ? `
+                <th style="width: 16%;" class="text-center">Option Sondage</th>
+              ` : ''}
+              <th style="width: 65px;" class="text-center">Cotisation</th>
+              <th style="width: 85px;" class="text-center">Pointage</th>
               <th>Émargement / Signature élève</th>
-              <th style="width: 18%;">Observations</th>
+              <th style="width: ${sessionToPrint.survey?.enabled ? '14%' : '18%'};">Observations</th>
             </tr>
           </thead>
           <tbody>
             ${enrolledList.map((s, idx) => {
               const isP = presentIds.has(s.id);
               const isPaid = String(s.paid).toUpperCase() === 'OUI';
+              const surveyAns = sessionToPrint.surveyResponses?.[s.id];
+              const surveyAnsStr = surveyAns 
+                ? (Array.isArray(surveyAns) ? surveyAns.join(', ') : surveyAns)
+                : '-';
               return `
                 <tr>
                   <td class="text-center" style="font-weight:bold; color:#64748b;">${idx + 1}</td>
                   <td style="font-weight:bold; text-transform:uppercase;">${s.lastName || ''}</td>
                   <td>${s.firstName || ''}</td>
                   <td class="text-center" style="font-weight:bold;">${s.classGroup || ''}</td>
+                  ${sessionToPrint.survey?.enabled ? `
+                    <td class="text-center" style="font-size:10px; font-weight:600; color:#0369a1;">
+                      ${surveyAnsStr}
+                    </td>
+                  ` : ''}
                   <td class="text-center" style="font-size:10px;">
                     ${isPaid ? 'Payé ✓' : '<span style="color:#b91c1c; font-weight:bold;">Non payé ⚠️</span>'}
                   </td>
@@ -552,6 +567,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 <td></td>
                 <td></td>
                 <td></td>
+                ${sessionToPrint.survey?.enabled ? '<td></td>' : ''}
                 <td></td>
                 <td class="text-center"><span class="check-box"></span></td>
                 <td></td>
@@ -718,7 +734,8 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       directRegistrationTeacherId: sess.directRegistrationTeacherId,
       directRegistrationTeacherName: sess.directRegistrationTeacherName,
       directRegistrationNotice: sess.directRegistrationNotice,
-      attachedPdf: sess.attachedPdf || null
+      attachedPdf: sess.attachedPdf || null,
+      survey: sess.survey || null
     });
     const series = getSeriesSessions(sess, sessions);
     setUpdateScope(series.length > 1 ? 'all' : 'single');
@@ -2727,6 +2744,186 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                     </div>
                   )}
                 </div>
+
+                {/* Option Sondage à l'inscription */}
+                <div className="bg-sky-50/80 p-4 rounded-xl border border-sky-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        className="rounded text-sky-600 focus:ring-sky-500 w-5 h-5"
+                        checked={formData.survey?.enabled || false}
+                        onChange={e => {
+                          const isChecked = e.target.checked;
+                          setFormData(prev => ({
+                            ...prev,
+                            survey: isChecked ? {
+                              enabled: true,
+                              question: prev.survey?.question || "Choix de l'atelier / option",
+                              options: prev.survey?.options && prev.survey.options.length > 0 
+                                ? prev.survey.options 
+                                : ['Option 1', 'Option 2'],
+                              required: prev.survey?.required ?? true,
+                              allowMultiple: prev.survey?.allowMultiple ?? false
+                            } : {
+                              enabled: false,
+                              question: prev.survey?.question || '',
+                              options: prev.survey?.options || []
+                            }
+                          }));
+                        }}
+                      />
+                      <span className="text-sm font-bold text-sky-950 flex items-center gap-1.5">
+                        <HelpCircle className="w-4 h-4 text-sky-700" />
+                        Sondage à l'inscription (choix d'options pour l'élève)
+                      </span>
+                    </label>
+                    {formData.survey?.enabled && (
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-sky-200 text-sky-900 border border-sky-300">
+                        Actif
+                      </span>
+                    )}
+                  </div>
+
+                  {formData.survey?.enabled && (
+                    <div className="pl-7 pt-2 space-y-3 border-t border-sky-200/80">
+                      <div>
+                        <label className="block text-xs font-bold text-sky-950 mb-1">
+                          Intitulé de la question posée à l'élève :
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 text-xs font-bold bg-white text-slate-900 border border-sky-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-2xs"
+                          value={formData.survey?.question || ''}
+                          onChange={e => setFormData(prev => ({
+                            ...prev,
+                            survey: prev.survey ? { ...prev.survey, question: e.target.value } : null
+                          }))}
+                          placeholder="Ex: Quelle activité souhaites-tu pratiquer ?"
+                        />
+                      </div>
+
+                      {/* Modèles prédéfinis rapides */}
+                      <div>
+                        <span className="text-[11px] font-bold text-sky-900 block mb-1.5">Modèles rapides :</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { label: '⚽ Activités sportives', q: "Quelle activité souhaites-tu pratiquer ?", opts: ['Futsal', 'Basket-ball', 'Badminton', 'Volley-ball'] },
+                            { label: '🥪 Repas / Pique-nique', q: "Choix du repas", opts: ["Pique-nique fourni par l'AS", "J'apporte mon repas"] },
+                            { label: '🚌 Transport retour', q: "Mode de retour", opts: ["Bus de l'AS", "Retour avec mes parents"] },
+                            { label: '🥇 Niveau', q: "Niveau de pratique", opts: ["Débutant / Loisir", "Confirmé / Compétition"] }
+                          ].map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => setFormData(prev => ({
+                                ...prev,
+                                survey: {
+                                  enabled: true,
+                                  question: preset.q,
+                                  options: preset.opts,
+                                  required: true,
+                                  allowMultiple: false
+                                }
+                              }))}
+                              className="text-[10px] font-bold px-2.5 py-1 bg-white hover:bg-sky-100 text-sky-800 rounded-lg border border-sky-300 transition-colors cursor-pointer"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Liste des options */}
+                      <div>
+                        <label className="block text-xs font-bold text-sky-950 mb-1.5">
+                          Options proposées aux élèves ({formData.survey?.options?.length || 0}) :
+                        </label>
+                        <div className="space-y-1.5">
+                          {(formData.survey?.options || []).map((opt, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-sky-200 text-sky-800 text-[10px] font-black flex items-center justify-center shrink-0">
+                                {idx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                className="flex-1 px-3 py-1.5 text-xs font-semibold bg-white border border-sky-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+                                value={opt}
+                                onChange={e => {
+                                  const newOpts = [...(formData.survey?.options || [])];
+                                  newOpts[idx] = e.target.value;
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    survey: prev.survey ? { ...prev.survey, options: newOpts } : null
+                                  }));
+                                }}
+                                placeholder={`Option ${idx + 1}`}
+                              />
+                              {(formData.survey?.options || []).length > 2 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newOpts = (formData.survey?.options || []).filter((_, i) => i !== idx);
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      survey: prev.survey ? { ...prev.survey, options: newOpts } : null
+                                    }));
+                                  }}
+                                  className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                                  title="Supprimer cette option"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newOpts = [...(formData.survey?.options || []), `Option ${(formData.survey?.options?.length || 0) + 1}`];
+                            setFormData(prev => ({
+                              ...prev,
+                              survey: prev.survey ? { ...prev.survey, options: newOpts } : null
+                            }));
+                          }}
+                          className="mt-2 text-xs font-bold text-sky-700 hover:text-sky-900 flex items-center gap-1 cursor-pointer"
+                        >
+                          + Ajouter une option
+                        </button>
+                      </div>
+
+                      {/* Options de validation */}
+                      <div className="pt-2 border-t border-sky-200/60 flex flex-wrap gap-4 text-xs font-semibold text-sky-950">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.survey?.required ?? true}
+                            onChange={e => setFormData(prev => ({
+                              ...prev,
+                              survey: prev.survey ? { ...prev.survey, required: e.target.checked } : null
+                            }))}
+                            className="rounded text-sky-600 focus:ring-sky-500"
+                          />
+                          <span>Réponse obligatoire à l'inscription</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.survey?.allowMultiple ?? false}
+                            onChange={e => setFormData(prev => ({
+                              ...prev,
+                              survey: prev.survey ? { ...prev.survey, allowMultiple: e.target.checked } : null
+                            }))}
+                            className="rounded text-sky-600 focus:ring-sky-500"
+                          />
+                          <span>Autoriser plusieurs choix</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {!formData.id && (
@@ -3385,7 +3582,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                                 {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
                                 {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
                               </div>
-                              <span className="text-xs text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                                {activeSession.survey?.enabled && activeSession.surveyResponses?.[s.id] && (
+                                  <span className="inline-flex items-center gap-1 bg-sky-100 text-sky-900 border border-sky-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate max-w-[150px]" title={`Choix sondage: ${Array.isArray(activeSession.surveyResponses[s.id]) ? activeSession.surveyResponses[s.id].join(', ') : activeSession.surveyResponses[s.id]}`}>
+                                    <span>🗳️</span>
+                                    <span className="truncate">{Array.isArray(activeSession.surveyResponses[s.id]) ? activeSession.surveyResponses[s.id].join(', ') : activeSession.surveyResponses[s.id]}</span>
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <button 

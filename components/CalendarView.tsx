@@ -15,8 +15,8 @@ import {
   ChevronLeft, ChevronRight, X, Printer, Users, FileText, 
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
   Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock,
-  ArrowRight, CheckCircle2, AlertCircle, Compass, CalendarDays, Zap, Flame, Check,
-  Layers, Moon, History, ChevronDown, Repeat, Timer, Search
+  ArrowRight, CheckCircle2, Circle, AlertCircle, Compass, CalendarDays, Zap, Flame, Check,
+  Layers, Moon, History, ChevronDown, Repeat, Timer, Search, HelpCircle
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -170,6 +170,11 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [newEventDirectRegistrationTeacherId, setNewEventDirectRegistrationTeacherId] = useState('');
   const [newEventDirectRegistrationTeacherName, setNewEventDirectRegistrationTeacherName] = useState('');
   const [newEventDirectRegistrationNotice, setNewEventDirectRegistrationNotice] = useState('');
+  const [newEventSurvey, setNewEventSurvey] = useState<Session['survey'] | null>(null);
+  
+  // Pointage d'appel et gestion des élèves depuis la modale événement
+  const [calendarStudentSearch, setCalendarStudentSearch] = useState('');
+  const [calendarActionNotice, setCalendarActionNotice] = useState<string | null>(null);
 
   // Repères temporels pour le Focus hebdomadaire et la limitation d'une semaine à l'autre
   const today = useMemo(() => startOfDay(new Date()), []);
@@ -468,6 +473,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventDirectRegistrationTeacherId(session.directRegistrationTeacherId || '');
     setNewEventDirectRegistrationTeacherName(session.directRegistrationTeacherName || '');
     setNewEventDirectRegistrationNotice(session.directRegistrationNotice || '');
+    setNewEventSurvey(session.survey || null);
     setClickedDate(new Date(session.date));
     setEditingEventId(event.id);
     setIsCreatingEvent(true);
@@ -636,6 +642,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventDirectRegistrationTeacherId('');
     setNewEventDirectRegistrationTeacherName('');
     setNewEventDirectRegistrationNotice('');
+    setNewEventSurvey(null);
     setEditingEventId(null);
     setIsCreatingEvent(true);
   };
@@ -678,6 +685,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || null) : null,
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || null) : null,
           directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null,
+          survey: newEventSurvey || null,
           attachedPdf: sessionDoc?.attachedPdf || null,
           enrolledStudentIds: existingEnrolled,
           presentStudentIds: existingPresent,
@@ -728,6 +736,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           directRegistrationTeacherId: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherId || undefined) : undefined,
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || undefined) : undefined,
           directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || undefined) : undefined,
+          survey: newEventSurvey || null,
           teams: [],
           enrolledStudentIds: [],
           presentStudentIds: [],
@@ -936,6 +945,123 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setTimeout(() => {
       printWindow.print();
     }, 250);
+  };
+
+  const toggleCalendarAttendance = async (studentId: string) => {
+    if (!selectedEvent || selectedEvent.type !== 'session') return;
+    const sess = selectedEvent.raw as Session;
+    const present = new Set(sess.presentStudentIds || []);
+    if (present.has(studentId)) {
+      present.delete(studentId);
+    } else {
+      present.add(studentId);
+    }
+    const newPresent = Array.from(present);
+    const updated: Session = { ...sess, presentStudentIds: newPresent };
+    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    try {
+      await saveSessionApi(updated);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const markAllCalendarPresent = async () => {
+    if (!selectedEvent || selectedEvent.type !== 'session') return;
+    const sess = selectedEvent.raw as Session;
+    const allEnrolled = sess.enrolledStudentIds || [];
+    const updated: Session = { ...sess, presentStudentIds: allEnrolled };
+    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    try {
+      await saveSessionApi(updated);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const resetCalendarAttendance = async () => {
+    if (!selectedEvent || selectedEvent.type !== 'session') return;
+    const sess = selectedEvent.raw as Session;
+    const updated: Session = { ...sess, presentStudentIds: [] };
+    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    try {
+      await saveSessionApi(updated);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const addStudentToCalendarEvent = async (studentId: string, markPresent = false) => {
+    if (!selectedEvent) return;
+    if (selectedEvent.type === 'session') {
+      const sess = selectedEvent.raw as Session;
+      const enrolled = new Set(sess.enrolledStudentIds || []);
+      enrolled.add(studentId);
+      const newEnrolled = Array.from(enrolled);
+      const present = new Set(sess.presentStudentIds || []);
+      if (markPresent) present.add(studentId);
+      const newPresent = Array.from(present);
+      const updated: Session = { ...sess, enrolledStudentIds: newEnrolled, presentStudentIds: newPresent };
+      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      try {
+        await saveSessionApi(updated);
+        setCalendarActionNotice("✅ Élève inscrit à la séance !");
+        setTimeout(() => setCalendarActionNotice(null), 3000);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      const conv = selectedEvent.raw as Convocation;
+      const enrolled = new Set(conv.studentIds || []);
+      enrolled.add(studentId);
+      const newEnrolled = Array.from(enrolled);
+      const updated: Convocation = { ...conv, studentIds: newEnrolled };
+      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      try {
+        await saveConvocationApi(updated);
+        setCalendarActionNotice("✅ Élève ajouté à la convocation !");
+        setTimeout(() => setCalendarActionNotice(null), 3000);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const removeStudentFromCalendarEvent = async (studentId: string) => {
+    if (!selectedEvent) return;
+    if (selectedEvent.type === 'session') {
+      const sess = selectedEvent.raw as Session;
+      const newEnrolled = (sess.enrolledStudentIds || []).filter(id => id !== studentId);
+      const newPresent = (sess.presentStudentIds || []).filter(id => id !== studentId);
+      const updated: Session = { ...sess, enrolledStudentIds: newEnrolled, presentStudentIds: newPresent };
+      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      try {
+        await saveSessionApi(updated);
+        setCalendarActionNotice("Élève retiré de la séance.");
+        setTimeout(() => setCalendarActionNotice(null), 3000);
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      const conv = selectedEvent.raw as Convocation;
+      const newEnrolled = (conv.studentIds || []).filter(id => id !== studentId);
+      const updated: Convocation = { ...conv, studentIds: newEnrolled };
+      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      try {
+        await saveConvocationApi(updated);
+        setCalendarActionNotice("Élève retiré de la convocation.");
+        setTimeout(() => setCalendarActionNotice(null), 3000);
+      } catch (e) {
+        console.error(e);
+      }
+    }
   };
 
   const handleShare = () => {
@@ -2916,26 +3042,91 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 </div>
               )}
 
-              {/* Tous les élèves inscrits (Visible pour TOUS : enseignants et public) */}
+              {/* Gestion des élèves et pointage d'appel (Visible pour TOUS, avec actions interactives pour les enseignants) */}
               {(() => {
                 const enrolled = getEnrolledStudents(selectedEvent.studentIds);
-                const maxCap = selectedEvent.type === 'session' ? (selectedEvent.raw as Session).maxParticipants : undefined;
+                const isSession = selectedEvent.type === 'session';
+                const sess = isSession ? (selectedEvent.raw as Session) : null;
+                const maxCap = sess?.maxParticipants;
+                const presentIds = new Set(sess?.presentStudentIds || []);
+                const presentCount = enrolled.filter(st => presentIds.has(st.id)).length;
+                const survey = sess?.survey;
+                const responses = sess?.surveyResponses || {};
+
+                // Élèves disponibles pour ajout rapide
+                const searchQ = calendarStudentSearch.trim().toLowerCase();
+                const currentEnrolledSet = new Set(selectedEvent.studentIds || []);
+                const searchResults = searchQ.length >= 2 
+                  ? effectiveStudents
+                      .filter(s => !currentEnrolledSet.has(s.id))
+                      .filter(s => {
+                        const full = `${s.lastName || ''} ${s.firstName || ''}`.toLowerCase();
+                        const cls = (s.classGroup || '').toLowerCase();
+                        return full.includes(searchQ) || cls.includes(searchQ);
+                      })
+                      .slice(0, 8)
+                  : [];
+
                 return (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between gap-2 mb-3">
-                      <h3 className="font-black text-slate-900 flex items-center gap-2 text-base">
-                        <Users className="w-4 h-4 text-indigo-600" />
-                        <span>Élèves inscrits sur le calendrier ({enrolled.length}{maxCap ? ` / ${maxCap} places` : ''})</span>
-                      </h3>
-                      {maxCap && (
-                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${
-                          enrolled.length >= maxCap ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {enrolled.length >= maxCap ? 'Complet' : `${maxCap - enrolled.length} place(s) restante(s)`}
-                        </span>
+                  <div className="mb-6 space-y-4">
+                    {/* Notification d'action rapide */}
+                    {calendarActionNotice && (
+                      <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-900 flex items-center gap-2 animate-in fade-in">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>{calendarActionNotice}</span>
+                      </div>
+                    )}
+
+                    {/* En-tête de la liste */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-100 p-3.5 rounded-2xl border border-slate-200">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-black text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                            <Users className="w-4 h-4 text-indigo-600" />
+                            <span>Élèves inscrits ({enrolled.length}{maxCap ? ` / ${maxCap} places` : ''})</span>
+                          </h3>
+                          {maxCap && (
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              enrolled.length >= maxCap ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
+                            }`}>
+                              {enrolled.length >= maxCap ? 'Complet' : `${maxCap - enrolled.length} place(s) restante(s)`}
+                            </span>
+                          )}
+                        </div>
+                        {isSession && !isPublic && (
+                          <div className="text-xs text-slate-600 font-semibold mt-0.5">
+                            Pointage d'appel : <strong className="text-emerald-700">{presentCount} présent(s)</strong> sur {enrolled.length} inscrit(s)
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions rapides enseignant */}
+                      {!isPublic && isSession && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={markAllCalendarPresent}
+                            disabled={enrolled.length === 0}
+                            className="px-2.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-lg transition-colors cursor-pointer shadow-xs flex items-center gap-1"
+                            title="Pointer tous les inscrits comme présents"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Tout pointer présent</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={resetCalendarAttendance}
+                            disabled={presentCount === 0}
+                            className="px-2.5 py-1.5 text-xs font-bold bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 disabled:opacity-40 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                            title="Réinitialiser l'appel (marquer tous absents)"
+                          >
+                            <span>Réinitialiser</span>
+                          </button>
+                        </div>
                       )}
                     </div>
-                    
+
+                    {/* Tableau des inscrits */}
                     {enrolled.length === 0 ? (
                       <div className="bg-white border border-slate-200/90 rounded-2xl p-6 text-center space-y-1.5 shadow-xs">
                         <Users className="w-8 h-8 text-slate-300 mx-auto" />
@@ -2943,46 +3134,183 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                         <p className="text-xs text-slate-400">
                           {isPublic 
                             ? "Soyez le premier à vous inscrire pour cette séance !" 
-                            : "Aucun participant enregistré pour le moment."}
+                            : "Utilisez le champ d'ajout ci-dessous pour inscrire des élèves."}
                         </p>
                       </div>
                     ) : (
                       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                        <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+                        <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                           <table className="w-full text-left text-sm">
-                            <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 z-10">
+                            <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 z-10 text-xs">
                               <tr>
-                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider w-10">#</th>
-                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider">Nom & Prénom</th>
-                                <th className="px-4 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Classe</th>
+                                <th className="px-3 py-2 font-bold text-slate-500 uppercase w-8">#</th>
+                                <th className="px-3 py-2 font-bold text-slate-500 uppercase">Nom & Prénom</th>
+                                <th className="px-3 py-2 font-bold text-slate-500 uppercase">Classe</th>
+                                {survey?.enabled && (
+                                  <th className="px-3 py-2 font-bold text-indigo-700 uppercase">Option Sondage</th>
+                                )}
+                                {!isPublic && isSession && (
+                                  <th className="px-3 py-2 font-bold text-slate-500 uppercase text-center w-36">Pointage d'appel</th>
+                                )}
+                                {!isPublic && (
+                                  <th className="px-3 py-2 font-bold text-slate-500 uppercase text-right w-24">Action</th>
+                                )}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {enrolled.map((st, idx) => (
-                                <tr key={st.id || idx} className="hover:bg-indigo-50/40 transition-colors">
-                                  <td className="px-4 py-2.5 text-xs font-bold text-slate-400">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="px-4 py-2.5">
-                                    <div className="font-black text-slate-900 flex items-center gap-1.5">
-                                      <span>{st.lastName || st.name}</span>
-                                      <span className="font-medium text-slate-600">{st.firstName}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-2.5 text-right">
-                                    {st.classGroup ? (
-                                      <span className="bg-indigo-50 text-indigo-700 border border-indigo-200/80 px-2 py-0.5 rounded-md text-xs font-bold">
-                                        {st.classGroup}
-                                      </span>
-                                    ) : (
-                                      <span className="text-xs text-slate-400">-</span>
+                              {enrolled.map((st, idx) => {
+                                const isPresent = presentIds.has(st.id);
+                                const surveyAnswer = responses[st.id];
+
+                                return (
+                                  <tr key={st.id || idx} className={`transition-colors ${isPresent ? 'bg-emerald-50/50' : 'hover:bg-slate-50'}`}>
+                                    <td className="px-3 py-2 text-xs font-bold text-slate-400">
+                                      {idx + 1}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                        <span>{st.lastName || st.name}</span>
+                                        <span className="font-medium text-slate-600">{st.firstName}</span>
+                                        {isPresent && (
+                                          <span className="bg-emerald-200 text-emerald-950 text-[9px] font-black px-1.5 py-0.2 rounded uppercase">
+                                            Présent ✓
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      {st.classGroup ? (
+                                        <span className="bg-indigo-50 text-indigo-700 border border-indigo-200/80 px-2 py-0.5 rounded-md text-xs font-bold">
+                                          {st.classGroup}
+                                        </span>
+                                      ) : (
+                                        <span className="text-xs text-slate-400">-</span>
+                                      )}
+                                    </td>
+                                    {survey?.enabled && (
+                                      <td className="px-3 py-2">
+                                        {surveyAnswer ? (
+                                          <span className="inline-flex items-center gap-1 bg-sky-100 text-sky-950 font-bold px-2 py-0.5 rounded-lg text-xs border border-sky-300">
+                                            <span>🗳️</span>
+                                            <span className="truncate max-w-[140px]">{Array.isArray(surveyAnswer) ? surveyAnswer.join(', ') : surveyAnswer}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="text-xs text-slate-400 italic">Non renseigné</span>
+                                        )}
+                                      </td>
                                     )}
-                                  </td>
-                                </tr>
-                              ))}
+                                    {!isPublic && isSession && (
+                                      <td className="px-3 py-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleCalendarAttendance(st.id)}
+                                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                            isPresent 
+                                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs' 
+                                              : 'bg-white hover:bg-emerald-50 text-slate-600 hover:text-emerald-800 border border-slate-300'
+                                          }`}
+                                          title={isPresent ? "Cliquer pour marquer absent" : "Cliquer pour pointer présent"}
+                                        >
+                                          {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5 text-slate-400" />}
+                                          <span>{isPresent ? 'Présent ✓' : 'Pointer présent'}</span>
+                                        </button>
+                                      </td>
+                                    )}
+                                    {!isPublic && (
+                                      <td className="px-3 py-2 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => removeStudentFromCalendarEvent(st.id)}
+                                          className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 px-2 py-1 rounded text-xs font-bold transition-colors cursor-pointer"
+                                          title="Supprimer cet élève de la liste"
+                                        >
+                                          Retirer ✕
+                                        </button>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
+                      </div>
+                    )}
+
+                    {/* SECTION AJOUT RAPIDE D'ÉLÈVES À LA LISTE (POUR ENSEIGNANTS) */}
+                    {!isPublic && (
+                      <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                            <PlusCircle className="w-4 h-4 text-indigo-600" />
+                            <span>Ajouter un élève à cette liste ({isSession ? 'séance' : 'convocation'})</span>
+                          </label>
+                          <span className="text-[11px] text-slate-500 font-medium">Recherche instantanée dans l'annuaire</span>
+                        </div>
+
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Taper le nom, prénom ou classe pour ajouter un élève..."
+                            value={calendarStudentSearch}
+                            onChange={e => setCalendarStudentSearch(e.target.value)}
+                            className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                          />
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                          {calendarStudentSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setCalendarStudentSearch('')}
+                              className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        {calendarStudentSearch.trim().length >= 2 && (
+                          <div className="border border-slate-200 rounded-xl p-2 bg-slate-50 space-y-1.5 max-h-56 overflow-y-auto">
+                            {searchResults.length === 0 ? (
+                              <p className="text-xs text-slate-500 text-center py-2 italic">
+                                Aucun élève non-inscrit trouvé pour « {calendarStudentSearch} ».
+                              </p>
+                            ) : (
+                              searchResults.map(s => (
+                                <div key={s.id} className="p-2 bg-white rounded-lg border border-slate-200 flex items-center justify-between gap-2 hover:border-indigo-300">
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-xs text-slate-900 block truncate">{s.lastName} {s.firstName}</span>
+                                    <span className="text-[10px] text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        addStudentToCalendarEvent(s.id, false);
+                                        setCalendarStudentSearch('');
+                                      }}
+                                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
+                                    >
+                                      + Inscrire
+                                    </button>
+                                    {isSession && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          addStudentToCalendarEvent(s.id, true);
+                                          setCalendarStudentSearch('');
+                                        }}
+                                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                                        title="Inscrire et pointer présent en 1 clic"
+                                      >
+                                        ⚡ Pointer présent
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3489,6 +3817,130 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                         <p className="text-[11px] text-purple-700 leading-tight">
                           L'inscription de l'équipe ne pourra être validée que lorsque celle-ci comptera exactement <strong>{newEventTeamSize || 4} élèves</strong>.
                         </p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Section Sondage à l'inscription */}
+                  <div className="bg-sky-50/80 p-3 sm:p-3.5 rounded-xl border border-sky-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 text-sky-600 rounded border-gray-300 focus:ring-sky-500"
+                          checked={newEventSurvey?.enabled || false}
+                          onChange={e => {
+                            const isChecked = e.target.checked;
+                            setNewEventSurvey(prev => (
+                              isChecked ? {
+                                enabled: true,
+                                question: prev?.question || "Choix de l'atelier / option",
+                                options: prev?.options && prev.options.length > 0 ? prev.options : ['Option 1', 'Option 2'],
+                                required: prev?.required ?? true,
+                                allowMultiple: prev?.allowMultiple ?? false
+                              } : {
+                                enabled: false,
+                                question: prev?.question || '',
+                                options: prev?.options || []
+                              }
+                            ));
+                          }}
+                        />
+                        <span className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
+                          <HelpCircle className="w-4 h-4 text-sky-700" />
+                          Sondage à l'inscription (choix d'options pour l'élève)
+                        </span>
+                      </label>
+                      {newEventSurvey?.enabled && (
+                        <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-sky-200 text-sky-900 border border-sky-300">
+                          Actif
+                        </span>
+                      )}
+                    </div>
+
+                    {newEventSurvey?.enabled && (
+                      <div className="pl-6 pt-2 space-y-3 border-t border-sky-200/80">
+                        <div>
+                          <label className="block text-[11px] font-bold text-sky-950 mb-1">
+                            Question posée à l'élève :
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-1.5 text-xs font-bold bg-white text-slate-900 border border-sky-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+                            value={newEventSurvey?.question || ''}
+                            onChange={e => setNewEventSurvey(prev => prev ? { ...prev, question: e.target.value } : null)}
+                            placeholder="Ex: Quelle activité souhaites-tu pratiquer ?"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-sky-950 mb-1">
+                            Options proposées ({newEventSurvey?.options?.length || 0}) :
+                          </label>
+                          <div className="space-y-1.5">
+                            {(newEventSurvey?.options || []).map((opt, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className="w-5 h-5 rounded-full bg-sky-200 text-sky-800 text-[10px] font-black flex items-center justify-center shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  className="flex-1 px-2.5 py-1 text-xs font-semibold bg-white border border-sky-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500"
+                                  value={opt}
+                                  onChange={e => {
+                                    const newOpts = [...(newEventSurvey?.options || [])];
+                                    newOpts[idx] = e.target.value;
+                                    setNewEventSurvey(prev => prev ? { ...prev, options: newOpts } : null);
+                                  }}
+                                  placeholder={`Option ${idx + 1}`}
+                                />
+                                {(newEventSurvey?.options || []).length > 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const newOpts = (newEventSurvey?.options || []).filter((_, i) => i !== idx);
+                                      setNewEventSurvey(prev => prev ? { ...prev, options: newOpts } : null);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newOpts = [...(newEventSurvey?.options || []), `Option ${(newEventSurvey?.options?.length || 0) + 1}`];
+                              setNewEventSurvey(prev => prev ? { ...prev, options: newOpts } : null);
+                            }}
+                            className="mt-2 text-xs font-bold text-sky-700 hover:text-sky-900 flex items-center gap-1 cursor-pointer"
+                          >
+                            + Ajouter une option
+                          </button>
+                        </div>
+
+                        <div className="pt-2 border-t border-sky-200/60 flex flex-wrap gap-4 text-xs font-semibold text-sky-950">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newEventSurvey?.required ?? true}
+                              onChange={e => setNewEventSurvey(prev => prev ? { ...prev, required: e.target.checked } : null)}
+                              className="rounded text-sky-600 focus:ring-sky-500"
+                            />
+                            <span>Réponse obligatoire</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newEventSurvey?.allowMultiple ?? false}
+                              onChange={e => setNewEventSurvey(prev => prev ? { ...prev, allowMultiple: e.target.checked } : null)}
+                              className="rounded text-sky-600 focus:ring-sky-500"
+                            />
+                            <span>Autoriser choix multiples</span>
+                          </label>
+                        </div>
                       </div>
                     )}
                   </div>

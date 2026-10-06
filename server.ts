@@ -437,7 +437,7 @@ async function startServer() {
   // Public/self-enrollment endpoint
   app.post('/api/sessions/:id/enroll', async (req, res) => {
     try {
-      const { studentId } = req.body;
+      const { studentId, surveyResponse } = req.body;
       if (!studentId) return res.status(400).json({ error: 'Identifiant élève manquant' });
 
       const session = await getSessionById(req.params.id);
@@ -478,7 +478,14 @@ async function startServer() {
 
       enrolled.add(studentId);
       const newEnrolled = Array.from(enrolled);
-      await updateSessionById(req.params.id, { enrolledStudentIds: newEnrolled });
+      const surveyResponses = { ...(session.surveyResponses || {}) };
+      if (surveyResponse !== undefined && surveyResponse !== null) {
+        surveyResponses[studentId] = surveyResponse;
+      }
+      await updateSessionById(req.params.id, { 
+        enrolledStudentIds: newEnrolled,
+        surveyResponses
+      });
 
       // Synchroniser la convocation liée (session.convocationId ou convocation.sessionId)
       if (session.convocationId) {

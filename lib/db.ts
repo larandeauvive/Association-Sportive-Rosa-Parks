@@ -1005,7 +1005,7 @@ export const deleteSessionApi = async (id: string): Promise<void> => {
   }
 };
 
-export const enrollInSession = async (sessionId: string, studentId: string): Promise<void> => {
+export const enrollInSession = async (sessionId: string, studentId: string, surveyResponse?: string | string[]): Promise<void> => {
   const localSessions = getLocalSessions();
   const localSes = localSessions.find(s => s.id === sessionId);
   let convId: string | undefined = localSes?.convocationId;
@@ -1016,7 +1016,11 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
 
   if (localSes) {
     const currentEnrolled = Array.from(new Set([...(localSes.enrolledStudentIds || []), studentId]));
-    saveLocalSession({ ...localSes, enrolledStudentIds: currentEnrolled });
+    const localResponses = { ...(localSes.surveyResponses || {}) };
+    if (surveyResponse !== undefined && surveyResponse !== null) {
+      localResponses[studentId] = surveyResponse;
+    }
+    saveLocalSession({ ...localSes, enrolledStudentIds: currentEnrolled, surveyResponses: localResponses });
     
     const localConvs = getLocalConvocations();
     const linkedConvs = localConvs.filter(c => c.id === localSes.convocationId || c.sessionId === sessionId);
@@ -1034,9 +1038,15 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
       const sData = sDocSnap.data();
       const currentList: string[] = sData.enrolled_student_ids || sData.enrolledStudentIds || [];
       const updatedList = Array.from(new Set([...currentList, studentId]));
+      const fsResponses = { ...(sData.survey_responses || sData.surveyResponses || {}) };
+      if (surveyResponse !== undefined && surveyResponse !== null) {
+        fsResponses[studentId] = surveyResponse;
+      }
       await setDoc(sDocRef, { 
         enrolled_student_ids: updatedList, 
-        enrolledStudentIds: updatedList 
+        enrolledStudentIds: updatedList,
+        survey_responses: fsResponses,
+        surveyResponses: fsResponses
       }, { merge: true });
 
       const linkedConvId = sData.convocation_id || sData.convocationId || convId;
@@ -1063,7 +1073,7 @@ export const enrollInSession = async (sessionId: string, studentId: string): Pro
     try {
       await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/enroll`, {
         method: 'POST',
-        body: JSON.stringify({ studentId })
+        body: JSON.stringify({ studentId, surveyResponse })
       });
     } catch {
       // ok

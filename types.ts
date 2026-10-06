@@ -128,6 +128,16 @@ export interface Session {
   directRegistrationTeacherName?: string; // Nom de l'enseignant ("Voir l'inscription directement avec...")
   directRegistrationNotice?: string; // Mention complète affichée (ex: "Voir l'inscription directement avec M. Dupont")
   attachedPdf?: AttachedPdfDoc | null; // Document PDF joint (ex: recueil d'infos utiles pour élèves ou enseignants)
+  survey?: SessionSurvey | null; // Sondage à l'inscription (choix d'options par l'élève)
+  surveyResponses?: Record<string, string | string[]>; // Réponses des élèves { studentId: optionChoisie }
+}
+
+export interface SessionSurvey {
+  enabled: boolean; // Activer le sondage
+  question: string; // Intitulé de la question (ex: "Choix de l'atelier", "Restauration", "Transport retour")
+  options: string[]; // Options possibles (ex: ["Futsal", "Basket", "Badminton"])
+  required?: boolean; // Réponse obligatoire (défaut true)
+  allowMultiple?: boolean; // Permettre plusieurs choix (défaut false)
 }
 
 export interface AttachedPdfDoc {

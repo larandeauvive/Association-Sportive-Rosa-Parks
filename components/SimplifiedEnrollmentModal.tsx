@@ -3,7 +3,7 @@ import { Session, PublicStudent } from '../types';
 import { 
   X, Search, Check, CheckCircle2, Calendar, Clock, 
   MapPin, Users, Trophy, AlertCircle, ArrowLeft, Loader2,
-  Sparkles, UserCheck, Timer, Lock, Download, FileText
+  Sparkles, UserCheck, Timer, Lock, Download, FileText, HelpCircle
 } from 'lucide-react';
 import { getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
@@ -35,6 +35,9 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   const [isSubmittingTeam, setIsSubmittingTeam] = useState(false);
   const [teamSuccessMessage, setTeamSuccessMessage] = useState<string | null>(null);
 
+  // Réponses au sondage à l'inscription si configuré sur la séance
+  const [surveySelection, setSurveySelection] = useState<string[]>([]);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Charger la liste publique des élèves dès l'ouverture
@@ -48,6 +51,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     setTeamName('');
     setTeamMembers([]);
     setTeamSuccessMessage(null);
+    setSurveySelection([]);
 
     const loadDirectory = async () => {
       setLoading(true);
@@ -137,11 +141,21 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
       return;
     }
 
+    // Contrôle du sondage obligatoire
+    if (session.survey?.enabled && session.survey.required && surveySelection.length === 0) {
+      setErrorMessage(`Veuillez répondre au sondage ci-dessus avant de valider votre inscription (« ${session.survey.question || 'Choix option'} »).`);
+      return;
+    }
+
+    const surveyResponseValue = session.survey?.enabled && surveySelection.length > 0
+      ? (session.survey.allowMultiple ? surveySelection : surveySelection[0])
+      : undefined;
+
     setEnrollingId(student.id);
     setErrorMessage(null);
 
     try {
-      await enrollInSession(session.id, student.id);
+      await enrollInSession(session.id, student.id, surveyResponseValue);
       
       const updated = Array.from(new Set([...enrolledIds, student.id]));
       setEnrolledIds(updated);
@@ -172,6 +186,16 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
       return;
     }
 
+    // Contrôle du sondage obligatoire
+    if (session.survey?.enabled && session.survey.required && surveySelection.length === 0) {
+      setErrorMessage(`Veuillez répondre au sondage ci-dessus avant de valider votre inscription (« ${session.survey.question || 'Choix option'} »).`);
+      return;
+    }
+
+    const surveyResponseValue = session.survey?.enabled && surveySelection.length > 0
+      ? (session.survey.allowMultiple ? surveySelection : surveySelection[0])
+      : undefined;
+
     const cleanName = searchTerm.trim();
     if (cleanName.length < 2) return;
 
@@ -200,7 +224,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
         classGroup: 'Inconnue'
       };
 
-      await enrollInSession(session.id, createdId);
+      await enrollInSession(session.id, createdId, surveyResponseValue);
       
       setStudents(prev => [newPublic, ...prev]);
       setEnrolledIds(prev => [...prev, createdId]);
@@ -497,6 +521,94 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                 >
                   {isSubmittingTeam ? "Validation..." : `Valider l'équipe "${teamName}"`}
                 </button>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* SECTION CENTRALE : SONDAGE À L'INSCRIPTION                                */}
+          {/* ========================================================================= */}
+          {!isPast && !isFull && session.survey?.enabled && (
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-sky-50 to-indigo-50/60 rounded-2xl border-2 border-sky-300 shadow-sm space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                    <HelpCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-sky-800">
+                        Sondage d'inscription
+                      </span>
+                      {session.survey.required && (
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
+                          Choix obligatoire *
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-sm sm:text-base font-extrabold text-slate-900 mt-0.5">
+                      {session.survey.question || "Merci de faire votre choix pour cette séance :"}
+                    </h4>
+                  </div>
+                </div>
+                <span className="text-[11px] font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-md shrink-0">
+                  {session.survey.allowMultiple ? "Choix multiples autorisés" : "1 seul choix"}
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600">
+                {session.survey.allowMultiple 
+                  ? "Sélectionnez une ou plusieurs options ci-dessous qui seront enregistrées avec votre inscription :"
+                  : "Sélectionnez l'option choisie ci-dessous :"}
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                {(session.survey.options || []).map((option, idx) => {
+                  const isSelected = surveySelection.includes(option);
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        if (session.survey?.allowMultiple) {
+                          setSurveySelection(prev => 
+                            prev.includes(option) ? prev.filter(o => o !== option) : [...prev, option]
+                          );
+                        } else {
+                          setSurveySelection([option]);
+                        }
+                      }}
+                      className={`p-3 rounded-xl border-2 text-left font-bold text-xs sm:text-sm transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'bg-sky-600 text-white border-sky-600 shadow-md scale-[1.01]'
+                          : 'bg-white text-slate-800 border-sky-200 hover:border-sky-400 hover:bg-sky-50/50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className={`w-5 h-5 rounded-full text-[11px] font-black flex items-center justify-center shrink-0 ${
+                          isSelected ? 'bg-white text-sky-800' : 'bg-sky-100 text-sky-800'
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <span className="truncate">{option}</span>
+                      </span>
+                      {isSelected ? (
+                        <Check className="w-4 h-4 shrink-0 stroke-[3]" />
+                      ) : (
+                        <span className={`w-4 h-4 rounded-full border shrink-0 ${
+                          session.survey?.allowMultiple ? 'rounded-md border-sky-300' : 'border-sky-300'
+                        }`} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {session.survey.required && surveySelection.length === 0 && (
+                <p className="text-[11px] font-bold text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                  <span>⚠️</span>
+                  <span>Veuillez sélectionner au moins une option pour pouvoir valider votre inscription ci-dessous.</span>
+                </p>
               )}
             </div>
           )}

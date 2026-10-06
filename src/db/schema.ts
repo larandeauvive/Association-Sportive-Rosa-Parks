@@ -70,7 +70,9 @@ export const sessions = pgTable('sessions', {
   directRegistrationTeacherId: text('direct_registration_teacher_id'),
   directRegistrationTeacherName: text('direct_registration_teacher_name'),
   directRegistrationNotice: text('direct_registration_notice'),
-  attachedPdf: jsonb('attached_pdf')
+  attachedPdf: jsonb('attached_pdf'),
+  survey: jsonb('survey'),
+  surveyResponses: jsonb('survey_responses')
 });
 
 // Convocations compétitions (convocations)

@@ -436,7 +436,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50">
         <TeacherPortal 
-          students={students.filter(s => s.schoolYear === activeYear)}
+          students={students}
           activeYear={activeYear}
           onLogout={() => {
             localStorage.removeItem('teacher_auth');

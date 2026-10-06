@@ -360,7 +360,9 @@ export async function getSessions(schoolYear?: string): Promise<Session[]> {
       directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
       directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
       directRegistrationNotice: r.directRegistrationNotice ?? undefined,
-      attachedPdf: (r.attachedPdf as any) ?? null
+      attachedPdf: (r.attachedPdf as any) ?? null,
+      survey: (r.survey as any) ?? null,
+      surveyResponses: (r.surveyResponses as any) ?? {}
     })) as Session[];
   } catch (error) {
     console.error("Failed to query sessions:", error);
@@ -406,7 +408,9 @@ export async function getSessionById(id: string): Promise<Session | null> {
       directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
       directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
       directRegistrationNotice: r.directRegistrationNotice ?? undefined,
-      attachedPdf: (r.attachedPdf as any) ?? null
+      attachedPdf: (r.attachedPdf as any) ?? null,
+      survey: (r.survey as any) ?? null,
+      surveyResponses: (r.surveyResponses as any) ?? {}
     } as Session;
   } catch (error) {
     console.error("Failed to get session:", error);
@@ -454,7 +458,9 @@ export async function createSession(data: Omit<Session, 'id'> & { id?: string })
       directRegistrationTeacherId: data.directRegistrationTeacherId || null,
       directRegistrationTeacherName: data.directRegistrationTeacherName || null,
       directRegistrationNotice: data.directRegistrationNotice || null,
-      attachedPdf: data.attachedPdf || null
+      attachedPdf: data.attachedPdf || null,
+      survey: data.survey || null,
+      surveyResponses: data.surveyResponses || {}
     };
 
     await db.insert(sessions).values(values).onConflictDoUpdate({
@@ -507,6 +513,8 @@ export async function updateSessionById(id: string, data: Partial<Session>): Pro
     if (data.directRegistrationTeacherName !== undefined) payload.directRegistrationTeacherName = data.directRegistrationTeacherName;
     if (data.directRegistrationNotice !== undefined) payload.directRegistrationNotice = data.directRegistrationNotice;
     if (data.attachedPdf !== undefined) payload.attachedPdf = data.attachedPdf;
+    if (data.survey !== undefined) payload.survey = data.survey;
+    if (data.surveyResponses !== undefined) payload.surveyResponses = data.surveyResponses;
 
     if (Object.keys(payload).length > 0) {
       await db.update(sessions).set(payload).where(eq(sessions.id, id));
