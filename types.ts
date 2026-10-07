@@ -81,6 +81,7 @@ export interface Convocation {
   cafeteriaTime?: string; // Heure de passage au self
   returnTime?: string; // Heure de retour
   selectedCriteria?: string[]; // Critères personnalisés sélectionnés pour la convocation
+  attachedPdf?: AttachedPdfDoc | null; // Document PDF joint (fiche d'infos, règlement, parcours...)
 }
 
 export interface SessionTeam {

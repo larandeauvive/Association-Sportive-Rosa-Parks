@@ -3,10 +3,12 @@ import { Session, PublicStudent } from '../types';
 import { 
   X, Search, Check, CheckCircle2, Calendar, Clock, 
   MapPin, Users, Trophy, AlertCircle, ArrowLeft, Loader2,
-  Sparkles, UserCheck, Timer, Lock, Download, FileText, HelpCircle
+  Sparkles, UserCheck, Timer, Lock, Download, FileText, HelpCircle,
+  Share2
 } from 'lucide-react';
 import { getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
+import { formatFileSize } from '../lib/registrationFormHelper';
 
 interface SimplifiedEnrollmentModalProps {
   isOpen: boolean;
@@ -28,6 +30,31 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   const [successStudent, setSuccessStudent] = useState<PublicStudent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [enrolledIds, setEnrolledIds] = useState<string[]>([]);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleShareLink = async () => {
+    if (!session) return;
+    const url = `${window.location.origin}?enroll=${encodeURIComponent(session.id)}`;
+    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent.toLowerCase())) {
+      try {
+        await navigator.share({
+          title: `Inscription AS - ${session.name}`,
+          text: `Inscris-toi directement pour ${session.name} (AS Rosa Parks) :`,
+          url
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 3000);
+    } catch {
+      window.prompt("Copiez le lien d'inscription :", url);
+    }
+  };
 
   // Pour mode équipe si activé sur la séance
   const [teamName, setTeamName] = useState('');
@@ -352,19 +379,81 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 -mr-1 -mt-1 text-indigo-200 hover:text-white hover:bg-white/10 rounded-full transition-colors cursor-pointer"
-              title="Fermer la fenêtre"
-            >
-              <X className="w-6 h-6" />
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleShareLink}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border shadow-2xs ${
+                  copiedLink 
+                    ? 'bg-emerald-500 text-white border-emerald-400' 
+                    : 'bg-white/10 hover:bg-white/20 text-white border-white/20'
+                }`}
+                title="Partager le lien d'inscription directe"
+              >
+                {copiedLink ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-white" />
+                    <span>Lien copié !</span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Partager</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-2 -mr-1 -mt-1 text-indigo-200 hover:text-white hover:bg-white/10 rounded-full transition-colors cursor-pointer"
+                title="Fermer la fenêtre"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
           </div>
         </div>
 
         {/* CORPS DE LA FENÊTRE D'INSCRIPTION */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 space-y-4 overscroll-contain">
+          {/* Document joint PDF / Informations utiles */}
+          {session.attachedPdf && (
+            <div className="p-3.5 sm:p-4 bg-indigo-50/90 border border-indigo-200 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 font-black text-xs shadow-2xs border border-red-200">
+                  PDF
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] sm:text-[11px] font-bold text-indigo-900 uppercase tracking-wide block">
+                    Document joint / Informations utiles
+                  </span>
+                  <p className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                    {session.attachedPdf.fileName}
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Fiche d'information ({formatFileSize(session.attachedPdf.fileSize)})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const link = document.createElement('a');
+                  link.href = session.attachedPdf!.fileData;
+                  link.download = session.attachedPdf!.fileName || 'document.pdf';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl transition shadow-xs shrink-0 cursor-pointer"
+                title="Télécharger le document d'information"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Télécharger</span>
+              </button>
+            </div>
+          )}
           {/* Si inscription directe auprès d'un enseignant */}
           {session.blockOnlineRegistration ? (
             <div className="p-6 bg-amber-50 border-2 border-amber-300 rounded-2xl text-center space-y-3 shadow-xs">

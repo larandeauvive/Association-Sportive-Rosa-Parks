@@ -165,7 +165,10 @@ export function rowToConvocation(row: any): Convocation {
     meetingLocation: row.meeting_location ?? row.meetingLocation,
     cafeteriaTime: row.cafeteria_time ?? row.cafeteriaTime,
     returnTime: row.return_time ?? row.returnTime,
-    selectedCriteria: row.selected_criteria ?? row.selectedCriteria
+    selectedCriteria: row.selected_criteria ?? row.selectedCriteria,
+    attachedPdf: row.attached_pdf 
+      ? (typeof row.attached_pdf === 'string' ? JSON.parse(row.attached_pdf) : row.attached_pdf) 
+      : (row.attachedPdf || null)
   };
 }
 
@@ -190,6 +193,7 @@ export function convocationToRow(conv: Partial<Convocation>): any {
   if (conv.cafeteriaTime !== undefined) row.cafeteria_time = conv.cafeteriaTime;
   if (conv.returnTime !== undefined) row.return_time = conv.returnTime;
   if (conv.selectedCriteria !== undefined) row.selected_criteria = conv.selectedCriteria;
+  if (conv.attachedPdf !== undefined) row.attached_pdf = conv.attachedPdf;
   return row;
 }
 

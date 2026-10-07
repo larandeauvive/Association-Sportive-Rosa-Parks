@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
   Repeat, CalendarDays, Timer, Sparkles, Info, Lock, HelpCircle,
   FileText, FileUp, Download, Eye, X, Loader2,
-  Moon, Zap, Layers, Printer
+  Moon, Zap, Layers, Printer, Share2, Check
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -125,6 +125,36 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     });
   };
 
+  const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
+
+  const shareSessionLink = useCallback(async (sess: Session, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const url = `${window.location.origin}?enroll=${encodeURIComponent(sess.id)}`;
+    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent.toLowerCase())) {
+      try {
+        await navigator.share({
+          title: `Inscription AS - ${sess.name}`,
+          text: `Inscris-toi directement pour ${sess.name} (AS Rosa Parks) :`,
+          url
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedSessionId(sess.id);
+      setTimeout(() => setCopiedSessionId(null), 3000);
+    } catch {
+      window.prompt("Copiez le lien d'inscription directe :", url);
+    }
+  }, []);
+
   const todayStr = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -148,6 +178,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   const asSoirHorizonStr = useMemo(() => format(asSoirHorizonDate, 'yyyy-MM-dd'), [asSoirHorizonDate]);
   
   const [isCreating, setIsCreating] = useState(false);
+  const [editSubTab, setEditSubTab] = useState<'params' | 'attendance'>('params');
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrenceCount, setRecurrenceCount] = useState(4);
   const [formData, setFormData] = useState<Partial<Session>>({
@@ -222,10 +253,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       // Présélection automatique de la séance la plus pertinente selon la catégorie active
       setActiveSessionId(prev => {
         if (prev && sList.some(s => s.id === prev)) {
-          const cur = sList.find(s => s.id === prev);
-          if (cur && (activeCategory === 'all' || getSessionCategory(cur) === activeCategory)) {
-            return prev;
-          }
+          return prev;
         }
         return selectBestSession(sList, activeCategory, timeFilter);
       });
@@ -242,15 +270,13 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   useEffect(() => {
     if (sessions.length > 0) {
       setActiveSessionId(prev => {
-        const cur = sessions.find(s => s.id === prev);
-        const matchesCategory = !cur || activeCategory === 'all' || getSessionCategory(cur) === activeCategory;
-        const isPast = cur && (cur.date || '') < todayStr;
-        const matchesTime = !cur || timeFilter === 'all' || (timeFilter === 'past' ? isPast : !isPast);
-        if (cur && matchesCategory && matchesTime) return prev;
+        if (prev && sessions.some(s => s.id === prev)) {
+          return prev;
+        }
         return selectBestSession(sessions, activeCategory, timeFilter);
       });
     }
-  }, [activeCategory, timeFilter, selectBestSession, sessions, todayStr]);
+  }, [activeCategory, timeFilter, selectBestSession]);
 
   // Fonction d'impression complète et professionnelle de la feuille d'appel & d'émargement
   const handlePrintSession = (sessionToPrint = activeSession) => {
@@ -725,6 +751,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     }
 
     setIsCreating(true);
+    setEditSubTab('params');
   };
 
   const openEditForm = (sess: Session) => {
@@ -753,6 +780,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     }
 
     setIsCreating(true);
+    setEditSubTab('params');
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -947,13 +975,23 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     setDeleteScope('single');
   };
 
+  // Session active ciblée pour le pointage et les inscriptions (compatible mode édition)
+  const currentTargetSession = useMemo(() => {
+    if (isCreating && formData.id) {
+      const match = sessions.find(s => s.id === formData.id);
+      return match ? { ...match, ...formData } : (formData as Session);
+    }
+    return activeSession;
+  }, [isCreating, formData, sessions, activeSession]);
+
   const toggleEnrollment = async (studentId: string) => {
-    if (!activeSession) return;
-    const enrolled = new Set<string>(activeSession.enrolledStudentIds || []);
+    const target = currentTargetSession;
+    if (!target) return;
+    const enrolled = new Set<string>(target.enrolledStudentIds || []);
     if (enrolled.has(studentId)) {
       enrolled.delete(studentId);
     } else {
-      if (activeSession.requirePaid) {
+      if (target.requirePaid) {
         const student = students.find(s => s.id === studentId);
         if (student && String(student.paid).toUpperCase() !== 'OUI') {
           const proceed = confirm(`Attention : ${student.firstName} ${student.lastName} n'est pas à jour de cotisation (paiement non validé).\n\nVoulez-vous tout de même l'inscrire à cette séance ?`);
@@ -964,7 +1002,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     }
     
     // Also remove from present if un-enrolled
-    const present = new Set<string>(activeSession.presentStudentIds || []);
+    const present = new Set<string>(target.presentStudentIds || []);
     if (!enrolled.has(studentId) && present.has(studentId)) {
       present.delete(studentId);
     }
@@ -974,34 +1012,42 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       const newPresentIds = Array.from(present);
 
       // Mise à jour optimiste locale immédiate pour réactivité instantanée
-      setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+      setSessions(prev => prev.map(s => s.id === target.id ? {
         ...s,
         enrolledStudentIds: newEnrolledIds,
         presentStudentIds: newPresentIds
       } : s));
 
+      if (isCreating && formData.id === target.id) {
+        setFormData(prev => ({
+          ...prev,
+          enrolledStudentIds: newEnrolledIds,
+          presentStudentIds: newPresentIds
+        }));
+      }
+
       await saveSessionApi({
-        ...activeSession,
-        id: activeSession.id,
+        ...target,
+        id: target.id,
         enrolledStudentIds: newEnrolledIds,
         presentStudentIds: newPresentIds
       });
       
-      if (activeSession.convocationId) {
+      if (target.convocationId) {
          await saveConvocationApi({
-           id: activeSession.convocationId,
+           id: target.convocationId,
            studentIds: newEnrolledIds
          });
       }
-      await fetchSessionManagerData();
     } catch (err) {
       console.error(err);
     }
   };
 
   const toggleAttendance = async (studentId: string) => {
-    if (!activeSession) return;
-    const present = new Set<string>(activeSession.presentStudentIds || []);
+    const target = currentTargetSession;
+    if (!target) return;
+    const present = new Set<string>(target.presentStudentIds || []);
     if (present.has(studentId)) {
       present.delete(studentId);
     } else {
@@ -1011,17 +1057,23 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       const newPresentIds = Array.from(present);
 
       // Mise à jour optimiste locale immédiate
-      setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+      setSessions(prev => prev.map(s => s.id === target.id ? {
         ...s,
         presentStudentIds: newPresentIds
       } : s));
 
+      if (isCreating && formData.id === target.id) {
+        setFormData(prev => ({
+          ...prev,
+          presentStudentIds: newPresentIds
+        }));
+      }
+
       await saveSessionApi({
-        ...activeSession,
-        id: activeSession.id,
+        ...target,
+        id: target.id,
         presentStudentIds: newPresentIds
       });
-      await fetchSessionManagerData();
     } catch (err) {
       console.error(err);
     }
@@ -1029,9 +1081,10 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
 
   // Pointer un élève directement depuis "Tous les élèves" (en 1 clic : inscrit + présent)
   const quickToggleDirectAttendance = async (studentId: string) => {
-    if (!activeSession) return;
-    const enrolled = new Set<string>(activeSession.enrolledStudentIds || []);
-    const present = new Set<string>(activeSession.presentStudentIds || []);
+    const target = currentTargetSession;
+    if (!target) return;
+    const enrolled = new Set<string>(target.enrolledStudentIds || []);
+    const present = new Set<string>(target.presentStudentIds || []);
 
     const isAlreadyEnrolled = enrolled.has(studentId);
     const isAlreadyPresent = present.has(studentId);
@@ -1041,7 +1094,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       present.delete(studentId);
     } else {
       if (!isAlreadyEnrolled) {
-        if (activeSession.requirePaid) {
+        if (target.requirePaid) {
           const student = students.find(s => s.id === studentId);
           if (student && String(student.paid).toUpperCase() !== 'OUI') {
             const proceed = confirm(`Attention : ${student.firstName} ${student.lastName} n'est pas à jour de cotisation (paiement non validé).\nVoulez-vous tout de même l'inscrire et le pointer présent ?`);
@@ -1056,26 +1109,33 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     const newEnrolledIds = Array.from(enrolled);
     const newPresentIds = Array.from(present);
 
-    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+    setSessions(prev => prev.map(s => s.id === target.id ? {
       ...s,
       enrolledStudentIds: newEnrolledIds,
       presentStudentIds: newPresentIds
     } : s));
 
+    if (isCreating && formData.id === target.id) {
+      setFormData(prev => ({
+        ...prev,
+        enrolledStudentIds: newEnrolledIds,
+        presentStudentIds: newPresentIds
+      }));
+    }
+
     try {
       await saveSessionApi({
-        ...activeSession,
-        id: activeSession.id,
+        ...target,
+        id: target.id,
         enrolledStudentIds: newEnrolledIds,
         presentStudentIds: newPresentIds
       });
-      if (activeSession.convocationId) {
+      if (target.convocationId) {
         await saveConvocationApi({
-          id: activeSession.convocationId,
+          id: target.convocationId,
           studentIds: newEnrolledIds
         });
       }
-      await fetchSessionManagerData();
       setNotification(isAlreadyPresent ? "Élève dépointé (marqué absent)" : "✅ Élève pointé PRÉSENT à la séance");
     } catch (err) {
       console.error(err);
@@ -1084,19 +1144,25 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
 
   // Pointer tous les inscrits comme présents en un clic
   const markAllPresent = async () => {
-    if (!activeSession || !activeSession.enrolledStudentIds || activeSession.enrolledStudentIds.length === 0) return;
-    const newPresentIds = Array.from(new Set(activeSession.enrolledStudentIds));
-    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+    const target = currentTargetSession;
+    if (!target || !target.enrolledStudentIds || target.enrolledStudentIds.length === 0) return;
+    const newPresentIds = Array.from(new Set(target.enrolledStudentIds));
+    setSessions(prev => prev.map(s => s.id === target.id ? {
       ...s,
       presentStudentIds: newPresentIds
     } : s));
+    if (isCreating && formData.id === target.id) {
+      setFormData(prev => ({
+        ...prev,
+        presentStudentIds: newPresentIds
+      }));
+    }
     try {
       await saveSessionApi({
-        ...activeSession,
-        id: activeSession.id,
+        ...target,
+        id: target.id,
         presentStudentIds: newPresentIds
       });
-      await fetchSessionManagerData();
       setNotification(`✅ Tous les inscrits (${newPresentIds.length}) ont été pointés présents.`);
     } catch (err) {
       console.error(err);
@@ -1105,19 +1171,25 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
 
   // Réinitialiser le pointage (tous absents)
   const markAllAbsent = async () => {
-    if (!activeSession) return;
+    const target = currentTargetSession;
+    if (!target) return;
     if (!confirm("Voulez-vous réinitialiser l'appel et marquer tous les élèves absents sur cette séance ?")) return;
-    setSessions(prev => prev.map(s => s.id === activeSession.id ? {
+    setSessions(prev => prev.map(s => s.id === target.id ? {
       ...s,
       presentStudentIds: []
     } : s));
+    if (isCreating && formData.id === target.id) {
+      setFormData(prev => ({
+        ...prev,
+        presentStudentIds: []
+      }));
+    }
     try {
       await saveSessionApi({
-        ...activeSession,
-        id: activeSession.id,
+        ...target,
+        id: target.id,
         presentStudentIds: []
       });
-      await fetchSessionManagerData();
       setNotification("Pointage d'appel réinitialisé (tous absents).");
     } catch (err) {
       console.error(err);
@@ -1136,16 +1208,17 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       const audience = (activeSession?.targetAudience || formData.targetAudience || 'all');
       if (audience === 'students' && student.isAdult) return false;
       if (audience === 'adults' && !student.isAdult) return false;
-      
+
       return true;
     });
   }, [students, searchTerm, activeSession?.targetAudience, formData.targetAudience]);
 
   // Liste des élèves inscrits pour le pointage d'appel (avec filtre présent/absent et recherche interne)
   const activeEnrolledStudents = useMemo(() => {
-    if (!activeSession) return [];
-    const enrolledIds = new Set(activeSession.enrolledStudentIds || []);
-    const presentIds = new Set(activeSession.presentStudentIds || []);
+    const target = currentTargetSession;
+    if (!target) return [];
+    const enrolledIds = new Set(target.enrolledStudentIds || []);
+    const presentIds = new Set(target.presentStudentIds || []);
     
     return students
       .filter(s => enrolledIds.has(s.id))
@@ -1163,7 +1236,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         if (clsCmp !== 0) return clsCmp;
         return (a.lastName || '').localeCompare(b.lastName || '');
       });
-  }, [activeSession, students, attendanceStatusFilter, attendanceSearch]);
+  }, [currentTargetSession, students, attendanceStatusFilter, attendanceSearch]);
 
   // Partitionnement chronologique et par catégorie :
   // Colonne 1 : AS du Soir (Mardi ou Jeudi, 17h00 - 18h00, récurrents)
@@ -1348,6 +1421,22 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
             }`} title="Présents / Inscrits">
               {(s.presentStudentIds || []).length} / {(s.enrolledStudentIds || []).length}
             </div>
+            <button 
+              type="button"
+              onClick={(e) => shareSessionLink(s, e)} 
+              className={`p-1 rounded transition-colors cursor-pointer ${
+                copiedSessionId === s.id
+                  ? 'text-emerald-600 bg-emerald-50'
+                  : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+              }`}
+              title="Copier / partager le lien d'inscription directe"
+            >
+              {copiedSessionId === s.id ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <Share2 className="w-3.5 h-3.5" />
+              )}
+            </button>
             <button 
               type="button"
               onClick={(e) => { e.stopPropagation(); handlePrintSession(s); }} 
@@ -3177,14 +3266,26 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 </div>
 
                 <button 
-                  onClick={() => {
-                    const url = `${window.location.origin}?enroll=${activeSession.id}`;
-                    navigator.clipboard.writeText(url);
-                    alert('Lien copié : ' + url);
-                  }}
-                  className="mt-3 flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                  type="button"
+                  onClick={(e) => shareSessionLink(activeSession, e)}
+                  className={`mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                    copiedSessionId === activeSession.id
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                  }`}
+                  title="Partager ou copier le lien direct d'inscription pour cette séance"
                 >
-                  <Link2 className="w-4 h-4" /> Copier le lien d'inscription publique
+                  {copiedSessionId === activeSession.id ? (
+                    <>
+                      <Check className="w-4 h-4 text-white" />
+                      <span>Lien d'inscription copié !</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4 text-indigo-600" />
+                      <span>Partager le lien d'inscription</span>
+                    </>
+                  )}
                 </button>
               </div>
 

@@ -4,7 +4,8 @@ import {
   CheckCircle2, Search, AlertCircle, Users, 
   X, Trophy, Sparkles, Check, ArrowLeft,
   Calendar, Clock, MapPin, UserCheck, Loader2,
-  Timer, Lock, Download, FileText, HelpCircle
+  Timer, Lock, Download, FileText, HelpCircle,
+  Share2
 } from 'lucide-react';
 import { getSession, getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
@@ -31,8 +32,32 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
 
   // Réponses au sondage à l'inscription si configuré sur la séance
   const [surveySelection, setSurveySelection] = useState<string[]>([]);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleShareCurrentLink = async () => {
+    const url = window.location.href;
+    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent.toLowerCase())) {
+      try {
+        await navigator.share({
+          title: `Inscription AS - ${session?.name || 'Séance'}`,
+          text: `Inscris-toi directement pour ${session?.name || 'cette séance'} (AS Rosa Parks) :`,
+          url
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 3000);
+    } catch {
+      window.prompt("Copiez le lien direct d'inscription :", url);
+    }
+  };
 
   const handleGoBack = () => {
     if (onBack) {
@@ -321,14 +346,39 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   return (
     <div className="min-h-screen bg-slate-100/80 flex flex-col justify-between p-2 sm:p-6">
       <div className="w-full max-w-xl mx-auto space-y-3">
-        {/* Navigation retour fluide */}
-        <button
-          onClick={handleGoBack}
-          className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-600 hover:text-indigo-600 bg-white/80 hover:bg-white px-3.5 py-2 rounded-xl border border-slate-200 transition-colors shadow-2xs cursor-pointer"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Voir tout le calendrier AS Rosa Parks</span>
-        </button>
+        {/* Navigation retour et partage du lien */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <button
+            onClick={handleGoBack}
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold text-slate-600 hover:text-indigo-600 bg-white/80 hover:bg-white px-3.5 py-2 rounded-xl border border-slate-200 transition-colors shadow-2xs cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Voir tout le calendrier AS Rosa Parks</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleShareCurrentLink}
+            className={`inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl border transition-all shadow-2xs cursor-pointer ${
+              copiedLink
+                ? 'bg-emerald-600 text-white border-emerald-600'
+                : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-200'
+            }`}
+            title="Partager le lien direct d'inscription"
+          >
+            {copiedLink ? (
+              <>
+                <Check className="w-4 h-4 text-white" />
+                <span>Lien copié !</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-4 h-4 text-indigo-600" />
+                <span>Partager ce lien</span>
+              </>
+            )}
+          </button>
+        </div>
 
         {/* CARTE PRINCIPALE SIMPLIFIÉE */}
         <div className="w-full bg-white rounded-3xl shadow-xl border border-slate-200/80 overflow-hidden">

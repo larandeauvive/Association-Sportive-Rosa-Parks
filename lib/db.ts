@@ -1194,11 +1194,15 @@ function mergeConvocationsWithLocal(remoteList: Convocation[], schoolYear?: stri
           ...(existing.studentIds || []),
           ...(c.studentIds || [])
         ]));
+        const pdf = (existing.attachedPdf?.fileData ? existing.attachedPdf : null) ||
+                    (c.attachedPdf?.fileData ? c.attachedPdf : null) ||
+                    existing.attachedPdf || c.attachedPdf;
         // Priorité aux données du serveur pour éviter d'écraser avec du local périmé
         map.set(c.id, {
           ...c,
           ...existing,
-          studentIds: mergedStudents
+          studentIds: mergedStudents,
+          attachedPdf: pdf
         });
       } else {
         map.set(c.id, c);

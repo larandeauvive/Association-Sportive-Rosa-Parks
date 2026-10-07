@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Convocation, Student, Session } from '../types';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Convocation, Student, Session, AttachedPdfDoc } from '../types';
 import { 
   PlusCircle, Trash2, Printer, Search, X, Save, Edit3, 
   ChevronRight, CheckSquare, Square, Filter, Users, 
-  ShieldCheck, Check, AlertCircle, RefreshCw, Layers
+  ShieldCheck, Check, AlertCircle, RefreshCw, Layers,
+  Download, FileUp, FileText, Share2, Link2
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -11,6 +12,7 @@ import {
   getTeachersList, saveSessionApi, getSessionsList 
 } from '../lib/db';
 import { AVAILABLE_CONVOCATION_CRITERIA, getStudentCategory } from '../lib/categoryUtils';
+import { formatFileSize } from '../lib/registrationFormHelper';
 
 interface Props {
   students: Student[];
@@ -34,6 +36,39 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
   const [formData, setFormData] = useState<Partial<Convocation>>({});
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Pièces jointes PDF et Partage de lien
+  const [isUploadingConvPdf, setIsUploadingConvPdf] = useState(false);
+  const [isPdfDraggingInConvForm, setIsPdfDraggingInConvForm] = useState(false);
+  const [copiedLinkConvId, setCopiedLinkConvId] = useState<string | null>(null);
+  const convFormPdfInputRef = useRef<HTMLInputElement>(null);
+  const convViewPdfInputRef = useRef<HTMLInputElement>(null);
+
+  const readFileAsAttachedPdf = (file: File): Promise<AttachedPdfDoc> => {
+    return new Promise((resolve, reject) => {
+      const isPdf = file.name.toLowerCase().endsWith('.pdf') || 
+                    file.type.toLowerCase().includes('pdf') || 
+                    file.type === 'application/pdf';
+      if (!isPdf) {
+        return reject(new Error("Seuls les fichiers au format PDF sont acceptés."));
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        return reject(new Error("Le fichier PDF est trop volumineux (maximum 25 Mo)."));
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          fileName: file.name,
+          fileSize: file.size,
+          fileData: reader.result as string,
+          uploadedAt: new Date().toISOString(),
+          title: file.name.replace(/\.[^/.]+$/, "")
+        });
+      };
+      reader.onerror = () => reject(new Error("Erreur lors de la lecture du fichier PDF."));
+      reader.readAsDataURL(file);
+    });
+  };
 
   // Filtres avancés de sélection des élèves
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('ALL');
@@ -200,6 +235,7 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
         tshirtManagerId,
         snackManagerIds,
         studentIds: studentsToPersist,
+        attachedPdf: formData.attachedPdf !== undefined ? formData.attachedPdf : (activeConvocation?.attachedPdf || null),
         selectedCriteria: formData.selectedCriteria && formData.selectedCriteria.length > 0 
           ? formData.selectedCriteria 
           : DEFAULT_CRITERIA_IDS,
@@ -233,6 +269,73 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
     } catch (err) {
       console.error(err);
       alert("Erreur lors de la sauvegarde.");
+    }
+  };
+
+  // Partage direct du lien d'inscription publique pour la convocation / séance
+  const shareConvocationLink = async (conv: Convocation, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const linked = sessions.find(s => s.convocationId === conv.id || s.id === conv.sessionId);
+    const targetSessionId = conv.sessionId || linked?.id;
+    const url = targetSessionId 
+      ? `${window.location.origin}?enroll=${encodeURIComponent(targetSessionId)}`
+      : `${window.location.origin}?public=calendar`;
+
+    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent.toLowerCase())) {
+      try {
+        await navigator.share({
+          title: `Convocation AS - ${conv.competitionName}`,
+          text: `Inscris-toi ou consulte la convocation pour ${conv.competitionName} (AS Rosa Parks) :`,
+          url
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLinkConvId(conv.id);
+      setTimeout(() => setCopiedLinkConvId(null), 3000);
+    } catch {
+      window.prompt("Copiez le lien d'inscription directe :", url);
+    }
+  };
+
+  // Dépôt rapide de PDF sur la convocation active en consultation
+  const handleDropPdfOnActiveConvocation = async (file: File) => {
+    if (!activeConvocation) return;
+    setIsUploadingConvPdf(true);
+    try {
+      const doc = await readFileAsAttachedPdf(file);
+      const updated = { ...activeConvocation, attachedPdf: doc };
+      await saveConvocationApi(updated);
+      setActiveConvocation(updated);
+      setConvocations(prev => prev.map(c => c.id === activeConvocation.id ? updated : c));
+    } catch (err: any) {
+      alert(err?.message || "Erreur lors du dépôt du PDF.");
+    } finally {
+      setIsUploadingConvPdf(false);
+    }
+  };
+
+  const handleDeletePdfFromActiveConvocation = async () => {
+    if (!activeConvocation || !activeConvocation.attachedPdf) return;
+    if (!confirm(`Supprimer le document joint "${activeConvocation.attachedPdf.fileName}" de cette convocation ?`)) return;
+    setIsUploadingConvPdf(true);
+    try {
+      const updated = { ...activeConvocation, attachedPdf: null };
+      await saveConvocationApi(updated);
+      setActiveConvocation(updated);
+      setConvocations(prev => prev.map(c => c.id === activeConvocation.id ? updated : c));
+    } catch (err: any) {
+      alert(err?.message || "Erreur lors de la suppression du PDF.");
+    } finally {
+      setIsUploadingConvPdf(false);
     }
   };
 
@@ -617,11 +720,19 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                 >
                   <div className="flex items-start justify-between gap-2 mb-1">
                     <h3 className="font-bold text-slate-900 text-sm truncate flex-1">{conv.competitionName || 'Sans titre'}</h3>
-                    {hasLinkedSes && (
-                      <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded shrink-0">
-                        Séance
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {conv.attachedPdf && (
+                        <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5" title={`Document joint : ${conv.attachedPdf.fileName}`}>
+                          <FileText className="w-2.5 h-2.5 text-rose-600" />
+                          <span>PDF</span>
+                        </span>
+                      )}
+                      {hasLinkedSes && (
+                        <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded shrink-0">
+                          Séance
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <p className="text-xs text-slate-500 flex justify-between items-center">
                     <span>{new Date(conv.departureDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</span>
@@ -630,6 +741,40 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                     </span>
                   </p>
                   <div className="flex justify-end gap-1.5 mt-2.5 pt-2 border-t border-slate-100">
+                    {conv.attachedPdf && (
+                      <button 
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const link = document.createElement('a');
+                          link.href = conv.attachedPdf!.fileData;
+                          link.download = conv.attachedPdf!.fileName || 'document.pdf';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }} 
+                        className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer" 
+                        title={`Télécharger le PDF : ${conv.attachedPdf.fileName}`}
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button 
+                      type="button"
+                      onClick={(e) => shareConvocationLink(conv, e)} 
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                        copiedLinkConvId === conv.id 
+                          ? 'bg-emerald-600 text-white' 
+                          : 'text-slate-500 hover:text-indigo-600 hover:bg-indigo-50'
+                      }`} 
+                      title="Partager / copier le lien d'inscription directe"
+                    >
+                      {copiedLinkConvId === conv.id ? (
+                        <Check className="w-3.5 h-3.5 text-white" />
+                      ) : (
+                        <Share2 className="w-3.5 h-3.5" />
+                      )}
+                    </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handlePrint(conv); }} 
                       className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer" 
@@ -687,6 +832,28 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
               </div>
               <div className="flex flex-wrap gap-2">
                 <button 
+                  type="button"
+                  onClick={(e) => shareConvocationLink(activeConvocation, e)} 
+                  className={`flex items-center gap-1.5 px-3.5 py-2 font-bold text-xs rounded-xl transition-all cursor-pointer ${
+                    copiedLinkConvId === activeConvocation.id
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
+                  }`}
+                  title="Partager ou copier le lien direct d'inscription"
+                >
+                  {copiedLinkConvId === activeConvocation.id ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-white" />
+                      <span>Lien copié !</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>Partager le lien</span>
+                    </>
+                  )}
+                </button>
+                <button 
                   onClick={() => handleEdit(activeConvocation)} 
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 transition-colors cursor-pointer"
                 >
@@ -730,6 +897,97 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                   </button>
                 </div>
               )}
+
+              {/* Pièce jointe / Document PDF de la convocation */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4">
+                <input
+                  type="file"
+                  ref={convViewPdfInputRef}
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) await handleDropPdfOnActiveConvocation(file);
+                    if (e.target) e.target.value = '';
+                  }}
+                />
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-rose-600" />
+                    <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
+                      Pièce jointe / Document officiel (PDF)
+                    </h3>
+                  </div>
+                  {activeConvocation.attachedPdf && (
+                    <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded-full">
+                      Document disponible
+                    </span>
+                  )}
+                </div>
+
+                {activeConvocation.attachedPdf ? (
+                  <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-black text-xs shrink-0 border border-red-200">
+                        PDF
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          {activeConvocation.attachedPdf.fileName}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          Taille : {formatFileSize(activeConvocation.attachedPdf.fileSize)} • Déposé le {new Date(activeConvocation.attachedPdf.uploadedAt).toLocaleDateString('fr-FR')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = activeConvocation.attachedPdf!.fileData;
+                          link.download = activeConvocation.attachedPdf!.fileName || 'convocation.pdf';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer shadow-2xs"
+                        title="Télécharger le document"
+                      >
+                        <Download className="w-3.5 h-3.5" /> Télécharger
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeletePdfFromActiveConvocation}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100/60 rounded-lg transition-colors cursor-pointer"
+                        title="Supprimer la pièce jointe"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => convViewPdfInputRef.current?.click()}
+                    className="p-3.5 border-2 border-dashed border-rose-200 hover:border-rose-400 bg-rose-50/30 hover:bg-rose-50/70 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <FileUp className="w-4 h-4 text-rose-600" />
+                      <div>
+                        <span className="text-xs font-bold text-rose-950 block">
+                          {isUploadingConvPdf ? "Chargement du fichier..." : "Ajouter une pièce jointe (PDF)"}
+                        </span>
+                        <span className="text-[10px] text-rose-700 block">
+                          Règlement de la compétition, horaire des bus, plan du parcours, autorisation...
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-rose-700 bg-white px-3 py-1 rounded-lg border border-rose-200">
+                      Parcourir
+                    </span>
+                  </div>
+                )}
+              </div>
 
               {/* Détails Logistiques */}
               <div>
@@ -1063,6 +1321,119 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                     );
                   })}
                 </div>
+              </div>
+
+              {/* SECTION: PIÈCE JOINTE PDF (Règlement, Fiche horaire, Plan du parcours...) */}
+              <div className="bg-rose-50/70 p-4 rounded-xl border border-rose-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-rose-700" />
+                    <h3 className="text-xs font-black text-rose-950 uppercase tracking-wider">
+                      Pièce jointe / Document officiel (PDF)
+                    </h3>
+                  </div>
+                  <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded-full">
+                    Optionnel (Max 25 Mo)
+                  </span>
+                </div>
+
+                <input
+                  type="file"
+                  ref={convFormPdfInputRef}
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      setIsUploadingConvPdf(true);
+                      const doc = await readFileAsAttachedPdf(file);
+                      setFormData(prev => ({ ...prev, attachedPdf: doc }));
+                    } catch (err: any) {
+                      alert(err?.message || "Erreur de lecture du PDF.");
+                    } finally {
+                      setIsUploadingConvPdf(false);
+                      if (e.target) e.target.value = '';
+                    }
+                  }}
+                />
+
+                {formData.attachedPdf ? (
+                  <div className="p-3 bg-white rounded-xl border border-rose-200 flex items-center justify-between gap-2 shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 font-black text-xs flex items-center justify-center shrink-0">
+                        PDF
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          {formData.attachedPdf.fileName}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {formatFileSize(formData.attachedPdf.fileSize)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const link = document.createElement('a');
+                          link.href = formData.attachedPdf!.fileData;
+                          link.download = formData.attachedPdf!.fileName;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}
+                        className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                        title="Télécharger / Prévisualiser"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, attachedPdf: null }))}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="Supprimer la pièce jointe"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setIsPdfDraggingInConvForm(true); }}
+                    onDragLeave={() => setIsPdfDraggingInConvForm(false)}
+                    onDrop={async (e) => {
+                      e.preventDefault();
+                      setIsPdfDraggingInConvForm(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (!file) return;
+                      try {
+                        setIsUploadingConvPdf(true);
+                        const doc = await readFileAsAttachedPdf(file);
+                        setFormData(prev => ({ ...prev, attachedPdf: doc }));
+                      } catch (err: any) {
+                        alert(err?.message || "Erreur de lecture du PDF.");
+                      } finally {
+                        setIsUploadingConvPdf(false);
+                      }
+                    }}
+                    onClick={() => convFormPdfInputRef.current?.click()}
+                    className={`p-3.5 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-1.5 text-center cursor-pointer transition-all ${
+                      isPdfDraggingInConvForm 
+                        ? 'border-rose-500 bg-rose-100/80 scale-[1.01]' 
+                        : 'border-rose-300 hover:border-rose-500 bg-white/70 hover:bg-white'
+                    }`}
+                  >
+                    <FileUp className="w-5 h-5 text-rose-600" />
+                    <span className="text-xs font-bold text-rose-950">
+                      {isUploadingConvPdf ? "Chargement du document..." : "Glissez un fichier PDF ou cliquez pour joindre"}
+                    </span>
+                    <span className="text-[10px] text-rose-700/80">
+                      Règlement officiel, plan de course, programme, autorisation parentale spécifique...
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* SECTION: SÉLECTION DES ÉLÈVES AVEC FILTRES CRITÈRES & CATÉGORIES */}

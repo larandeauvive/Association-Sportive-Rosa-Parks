@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Convocation, Session, Student, Teacher } from '../types';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Convocation, Session, Student, Teacher, AttachedPdfDoc } from '../types';
 import { 
   getConvocationsList, getSessionsList, saveSessionApi, 
   deleteSessionApi, saveConvocationApi, deleteConvocationApi,
@@ -16,7 +16,7 @@ import {
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
   Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock,
   ArrowRight, CheckCircle2, Circle, AlertCircle, Compass, CalendarDays, Zap, Flame, Check,
-  Layers, Moon, History, ChevronDown, Repeat, Timer, Search, HelpCircle
+  Layers, Moon, History, ChevronDown, Repeat, Timer, Search, HelpCircle, Link2, Eye
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -175,6 +175,97 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   // Pointage d'appel et gestion des élèves depuis la modale événement
   const [calendarStudentSearch, setCalendarStudentSearch] = useState('');
   const [calendarActionNotice, setCalendarActionNotice] = useState<string | null>(null);
+
+  // Gestion des pièces jointes PDF (Recueil d'informations utiles)
+  const [newEventAttachedPdf, setNewEventAttachedPdf] = useState<AttachedPdfDoc | null>(null);
+  const [isPdfDraggingInCalForm, setIsPdfDraggingInCalForm] = useState(false);
+  const [isPdfDraggingOnSelectedModal, setIsPdfDraggingOnSelectedModal] = useState(false);
+  const [isUploadingCalPdf, setIsUploadingCalPdf] = useState(false);
+  const calFormPdfInputRef = useRef<HTMLInputElement>(null);
+  const selectedModalPdfInputRef = useRef<HTMLInputElement>(null);
+
+  // Copie/Partage direct du lien d'inscription
+  const [copiedLinkEventId, setCopiedLinkEventId] = useState<string | null>(null);
+
+  const readFileAsAttachedPdf = (file: File): Promise<AttachedPdfDoc> => {
+    return new Promise((resolve, reject) => {
+      const isPdf = file.name.toLowerCase().endsWith('.pdf') || 
+                    file.type.toLowerCase().includes('pdf') || 
+                    file.type === 'application/pdf';
+      if (!isPdf) {
+        return reject(new Error("Seuls les fichiers au format PDF sont acceptés."));
+      }
+      if (file.size > 25 * 1024 * 1024) {
+        return reject(new Error("Le fichier PDF est trop volumineux (maximum 25 Mo)."));
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          fileName: file.name,
+          fileSize: file.size,
+          fileData: reader.result as string,
+          uploadedAt: new Date().toISOString(),
+          title: file.name.replace(/\.[^/.]+$/, "")
+        });
+      };
+      reader.onerror = () => reject(new Error("Erreur lors de la lecture du fichier PDF."));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const getEventRegistrationUrl = useCallback((event: CalendarEvent | Session | Convocation): string => {
+    let sessionId: string | undefined = undefined;
+    if ('type' in event) {
+      if (event.type === 'session') {
+        sessionId = event.id;
+      } else {
+        const c = event.raw as Convocation;
+        sessionId = c.sessionId;
+      }
+    } else if ('competitionName' in event) {
+      sessionId = (event as Convocation).sessionId;
+    } else {
+      sessionId = (event as Session).id;
+    }
+
+    if (sessionId) {
+      return `${window.location.origin}?enroll=${encodeURIComponent(sessionId)}`;
+    }
+    return `${window.location.origin}?public=calendar`;
+  }, []);
+
+  const handleShareRegistrationLink = useCallback(async (event: CalendarEvent | Session | Convocation, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const eventId = 'id' in event ? event.id : '';
+    const eventTitle = 'title' in event 
+      ? event.title 
+      : ('name' in event ? (event as Session).name : (event as Convocation).competitionName);
+    const url = getEventRegistrationUrl(event);
+
+    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent.toLowerCase())) {
+      try {
+        await navigator.share({
+          title: `Inscription AS - ${eventTitle}`,
+          text: `Inscris-toi directement pour ${eventTitle} (AS Rosa Parks) :`,
+          url
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLinkEventId(eventId);
+      setTimeout(() => setCopiedLinkEventId(null), 3000);
+    } catch {
+      window.prompt("Copiez le lien d'inscription directe :", url);
+    }
+  }, [getEventRegistrationUrl]);
 
   // Repères temporels pour le Focus hebdomadaire et la limitation d'une semaine à l'autre
   const today = useMemo(() => startOfDay(new Date()), []);
@@ -474,10 +565,61 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventDirectRegistrationTeacherName(session.directRegistrationTeacherName || '');
     setNewEventDirectRegistrationNotice(session.directRegistrationNotice || '');
     setNewEventSurvey(session.survey || null);
+    setNewEventAttachedPdf(session.attachedPdf || null);
     setClickedDate(new Date(session.date));
     setEditingEventId(event.id);
     setIsCreatingEvent(true);
     setSelectedEvent(null);
+  };
+
+  const handleDropPdfOnSelectedEvent = async (file: File) => {
+    if (!selectedEvent) return;
+    setIsUploadingCalPdf(true);
+    try {
+      const doc = await readFileAsAttachedPdf(file);
+      if (selectedEvent.type === 'session') {
+        const updatedSession = { ...(selectedEvent.raw as Session), attachedPdf: doc };
+        await saveSessionApi(updatedSession);
+        setSelectedEvent({ ...selectedEvent, raw: updatedSession });
+        setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedSession } : e));
+      } else {
+        const updatedConv = { ...(selectedEvent.raw as Convocation), attachedPdf: doc };
+        await saveConvocationApi(updatedConv);
+        setSelectedEvent({ ...selectedEvent, raw: updatedConv });
+        setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedConv } : e));
+      }
+      setCalendarActionNotice(`✅ Document "${doc.fileName}" joint avec succès !`);
+      setTimeout(() => setCalendarActionNotice(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || "Erreur lors du dépôt du PDF.");
+    } finally {
+      setIsUploadingCalPdf(false);
+    }
+  };
+
+  const handleDeletePdfFromSelectedEvent = async () => {
+    if (!selectedEvent) return;
+    if (!confirm("Voulez-vous supprimer cette pièce jointe ?")) return;
+    setIsUploadingCalPdf(true);
+    try {
+      if (selectedEvent.type === 'session') {
+        const updatedSession = { ...(selectedEvent.raw as Session), attachedPdf: null };
+        await saveSessionApi(updatedSession);
+        setSelectedEvent({ ...selectedEvent, raw: updatedSession });
+        setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedSession } : e));
+      } else {
+        const updatedConv = { ...(selectedEvent.raw as Convocation), attachedPdf: null };
+        await saveConvocationApi(updatedConv);
+        setSelectedEvent({ ...selectedEvent, raw: updatedConv });
+        setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedConv } : e));
+      }
+      setCalendarActionNotice("Document joint supprimé.");
+      setTimeout(() => setCalendarActionNotice(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || "Erreur lors de la suppression.");
+    } finally {
+      setIsUploadingCalPdf(false);
+    }
   };
 
   const loadCalendarData = useCallback(async () => {
@@ -643,6 +785,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventDirectRegistrationTeacherName('');
     setNewEventDirectRegistrationNotice('');
     setNewEventSurvey(null);
+    setNewEventAttachedPdf(null);
     setEditingEventId(null);
     setIsCreatingEvent(true);
   };
@@ -686,7 +829,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || null) : null,
           directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || null) : null,
           survey: newEventSurvey || null,
-          attachedPdf: sessionDoc?.attachedPdf || null,
+          attachedPdf: newEventAttachedPdf !== undefined ? newEventAttachedPdf : (sessionDoc?.attachedPdf || null),
           enrolledStudentIds: existingEnrolled,
           presentStudentIds: existingPresent,
           teams: existingTeams,
@@ -706,7 +849,8 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             meetingLocation: newEventMeetingLocation,
             cafeteriaTime: newEventCafeteriaTime,
             returnTime: newEventReturnTime,
-            studentIds: existingEnrolled
+            studentIds: existingEnrolled,
+            attachedPdf: newEventAttachedPdf !== undefined ? newEventAttachedPdf : null
           };
           await saveConvocationApi(convUpdateData);
         }
@@ -737,6 +881,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           directRegistrationTeacherName: newEventBlockOnlineRegistration ? (newEventDirectRegistrationTeacherName || undefined) : undefined,
           directRegistrationNotice: newEventBlockOnlineRegistration ? (newEventDirectRegistrationNotice || undefined) : undefined,
           survey: newEventSurvey || null,
+          attachedPdf: newEventAttachedPdf || null,
           teams: [],
           enrolledStudentIds: [],
           presentStudentIds: [],
@@ -758,7 +903,8 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               meetingTime: newEventMeetingTime,
               meetingLocation: newEventMeetingLocation,
               cafeteriaTime: newEventCafeteriaTime,
-              returnTime: newEventReturnTime
+              returnTime: newEventReturnTime,
+              attachedPdf: newEventAttachedPdf || null
            };
            try {
              const convResult = await saveConvocationApi(convData);
@@ -1213,25 +1359,51 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
 
         {/* Barre d'action */}
         <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center gap-1.5">
-            {rawSession?.attachedPdf && (
-              <button
-                type="button"
-                onClick={() => {
-                  const link = document.createElement('a');
-                  link.href = rawSession.attachedPdf!.fileData;
-                  link.download = rawSession.attachedPdf!.fileName || 'document.pdf';
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
-                title={`Télécharger ${rawSession.attachedPdf.fileName}`}
-              >
-                <Download className="w-3 h-3 text-rose-600" />
-                <span>PDF Infos</span>
-              </button>
-            )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(rawSession?.attachedPdf || rawConv?.attachedPdf) && (() => {
+              const doc = rawSession?.attachedPdf || rawConv?.attachedPdf!;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = doc.fileData;
+                    link.download = doc.fileName || 'document.pdf';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                  title={`Télécharger ${doc.fileName}`}
+                >
+                  <Download className="w-3 h-3 text-rose-600" />
+                  <span>PDF Infos</span>
+                </button>
+              );
+            })()}
+
+            <button
+              type="button"
+              onClick={(e) => handleShareRegistrationLink(event, e)}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border transition-all cursor-pointer ${
+                copiedLinkEventId === event.id
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border-indigo-200'
+              }`}
+              title="Partager ou copier le lien direct d'inscription pour cet événement"
+            >
+              {copiedLinkEventId === event.id ? (
+                <>
+                  <Check className="w-3 h-3 text-white" />
+                  <span>Lien copié !</span>
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3 h-3 text-indigo-600" />
+                  <span>Partager</span>
+                </>
+              )}
+            </button>
 
             <button
               type="button"
@@ -1485,7 +1657,55 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         </div>
 
         {/* Colonne droite : Actions CTA */}
-        <div className="shrink-0 w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
+        <div className="shrink-0 w-full sm:w-auto flex flex-wrap items-center justify-between sm:justify-end gap-2 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100">
+          {/* PDF joint si présent */}
+          {(rawSession?.attachedPdf || rawConv?.attachedPdf) && (() => {
+            const doc = rawSession?.attachedPdf || rawConv?.attachedPdf!;
+            return (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const link = document.createElement('a');
+                  link.href = doc.fileData;
+                  link.download = doc.fileName || 'document.pdf';
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                }}
+                className="px-2.5 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                title={`Télécharger ${doc.fileName}`}
+              >
+                <Download className="w-3.5 h-3.5 text-rose-600" />
+                <span className="hidden sm:inline">PDF</span>
+              </button>
+            );
+          })()}
+
+          {/* Partager lien direct */}
+          <button
+            type="button"
+            onClick={(e) => handleShareRegistrationLink(event, e)}
+            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1 cursor-pointer ${
+              copiedLinkEventId === event.id
+                ? 'bg-emerald-600 text-white border-emerald-600'
+                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+            }`}
+            title="Partager ou copier le lien direct d'inscription pour cet événement"
+          >
+            {copiedLinkEventId === event.id ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-white" />
+                <span>Copié !</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Partager</span>
+              </>
+            )}
+          </button>
+
           {isPublic && isSession && (
             <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
               <button
@@ -2902,40 +3122,109 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     </p>
                   )}
 
-                  {selectedEvent.type === 'session' && (selectedEvent.raw as Session).attachedPdf && (
-                    <div className="mt-3 p-3.5 bg-indigo-50/90 border border-indigo-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-black text-xs shrink-0 border border-red-200">
-                          PDF
-                        </div>
-                        <div className="min-w-0">
-                          <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wide block">
-                            Document joint / Recueil d'informations
-                          </span>
-                          <p className="text-xs font-bold text-slate-900 truncate">
-                            {(selectedEvent.raw as Session).attachedPdf!.fileName}
-                          </p>
-                        </div>
+                  {/* Pièce jointe / Document PDF (Séances & Convocations) */}
+                  {(() => {
+                    const currentDoc = selectedEvent.type === 'session' 
+                      ? (selectedEvent.raw as Session).attachedPdf 
+                      : (selectedEvent.raw as Convocation).attachedPdf;
+
+                    return (
+                      <div className="mt-3">
+                        <input
+                          type="file"
+                          ref={selectedModalPdfInputRef}
+                          accept="application/pdf,.pdf"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) await handleDropPdfOnSelectedEvent(file);
+                            if (e.target) e.target.value = '';
+                          }}
+                        />
+
+                        {currentDoc ? (
+                          <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center font-black text-xs shrink-0 border border-red-200">
+                                PDF
+                              </div>
+                              <div className="min-w-0">
+                                <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wide block">
+                                  Document joint / Recueil d'informations
+                                </span>
+                                <p className="text-xs font-bold text-slate-900 truncate">
+                                  {currentDoc.fileName}
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  {formatFileSize(currentDoc.fileSize)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const link = document.createElement('a');
+                                  link.href = currentDoc.fileData;
+                                  link.download = currentDoc.fileName || 'document.pdf';
+                                  document.body.appendChild(link);
+                                  link.click();
+                                  document.body.removeChild(link);
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs cursor-pointer"
+                                title="Télécharger le document d'information"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Télécharger</span>
+                              </button>
+                              {!isPublic && (
+                                <button
+                                  type="button"
+                                  onClick={handleDeletePdfFromSelectedEvent}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-100/70 rounded-lg transition-colors cursor-pointer"
+                                  title="Supprimer la pièce jointe"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ) : !isPublic ? (
+                          <div
+                            onDragOver={(e) => { e.preventDefault(); setIsPdfDraggingOnSelectedModal(true); }}
+                            onDragLeave={() => setIsPdfDraggingOnSelectedModal(false)}
+                            onDrop={async (e) => {
+                              e.preventDefault();
+                              setIsPdfDraggingOnSelectedModal(false);
+                              const file = e.dataTransfer.files?.[0];
+                              if (file) await handleDropPdfOnSelectedEvent(file);
+                            }}
+                            onClick={() => selectedModalPdfInputRef.current?.click()}
+                            className={`p-2.5 sm:p-3 border-2 border-dashed rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                              isPdfDraggingOnSelectedModal 
+                                ? 'border-rose-500 bg-rose-50 ring-2 ring-rose-300' 
+                                : 'border-rose-200 hover:border-rose-400 bg-rose-50/40 hover:bg-rose-50/80'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileUp className="w-4 h-4 text-rose-600 shrink-0" />
+                              <div className="text-left min-w-0">
+                                <span className="text-xs font-bold text-rose-950 block truncate">
+                                  {isUploadingCalPdf ? "Envoi du document en cours..." : "Ajouter une pièce jointe (PDF)"}
+                                </span>
+                                <span className="text-[10px] text-rose-700/80 block truncate">
+                                  Fiche infos, règlement, convocation, plan de parcours...
+                                </span>
+                              </div>
+                            </div>
+                            <span className="text-xs font-bold text-rose-700 bg-white px-2.5 py-1 rounded-lg border border-rose-200 shrink-0">
+                              Parcourir
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const doc = (selectedEvent.raw as Session).attachedPdf!;
-                          const link = document.createElement('a');
-                          link.href = doc.fileData;
-                          link.download = doc.fileName || 'recueil_informations.pdf';
-                          document.body.appendChild(link);
-                          link.click();
-                          document.body.removeChild(link);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs shrink-0 cursor-pointer"
-                        title="Télécharger le document d'information"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Télécharger</span>
-                      </button>
-                    </div>
-                  )}
+                    );
+                  })()}
                   
                   {selectedEvent.type === 'convocation' && (selectedEvent.raw as Convocation).needSnack === 'OUI' && (
                     <p className="text-amber-600 font-medium text-sm">🍪 Goûter à prévoir</p>
@@ -2945,12 +3234,37 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                   )}
                 </div>
               </div>
-              <button 
-                onClick={() => setSelectedEvent(null)}
-                className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => handleShareRegistrationLink(selectedEvent, e)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    copiedLinkEventId === selectedEvent.id
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                  }`}
+                  title="Partager ou copier le lien direct d'inscription"
+                >
+                  {copiedLinkEventId === selectedEvent.id ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-white" />
+                      <span>Lien copié !</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-3.5 h-3.5 text-indigo-600" />
+                      <span className="hidden sm:inline">Partager le lien</span>
+                    </>
+                  )}
+                </button>
+                <button 
+                  onClick={() => setSelectedEvent(null)}
+                  className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                  title="Fermer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 bg-slate-50 overscroll-contain">
@@ -3397,7 +3711,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               })()}
             </div>
             
-            <div className="p-4 border-t border-slate-100 flex justify-between items-center shrink-0 bg-white">
+            <div className="p-4 border-t border-slate-100 flex justify-between items-center shrink-0 bg-white gap-2">
               {!isPublic ? (
                 <div className="flex gap-2">
                   {selectedEvent.type === 'session' && (
@@ -3422,12 +3736,36 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               ) : (
                 <div />
               )}
-              <button
-                onClick={() => setSelectedEvent(null)}
-                className="px-5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium transition-colors"
-              >
-                Fermer
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => handleShareRegistrationLink(selectedEvent, e)}
+                  className={`px-3 sm:px-4 py-2 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-2 transition-all shadow-xs cursor-pointer ${
+                    copiedLinkEventId === selectedEvent.id
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white'
+                  }`}
+                  title="Partager ou copier le lien direct d'inscription pour cet événement"
+                >
+                  {copiedLinkEventId === selectedEvent.id ? (
+                    <>
+                      <Check className="w-4 h-4 text-white" />
+                      <span>Lien copié !</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-4 h-4" />
+                      <span>Partager lien direct</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setSelectedEvent(null)}
+                  className="px-4 sm:px-5 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium text-xs sm:text-sm transition-colors cursor-pointer"
+                >
+                  Fermer
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -3966,6 +4304,117 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                       </span>
                     </div>
                   )}
+
+                  {/* Section Pièce jointe PDF (Recueil d'informations, règlement, fiche parcours) */}
+                  <div className="bg-rose-50/70 p-3 sm:p-3.5 rounded-xl border border-rose-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-rose-700" />
+                        <span className="text-xs font-bold text-rose-950">Pièce jointe / Document PDF</span>
+                      </div>
+                      <span className="text-[10px] text-rose-700 font-semibold bg-rose-100 px-2 py-0.5 rounded-full">
+                        Optionnel (Max 25 Mo)
+                      </span>
+                    </div>
+
+                    <input
+                      type="file"
+                      ref={calFormPdfInputRef}
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          setIsUploadingCalPdf(true);
+                          const doc = await readFileAsAttachedPdf(file);
+                          setNewEventAttachedPdf(doc);
+                        } catch (err: any) {
+                          alert(err?.message || "Erreur de lecture du PDF.");
+                        } finally {
+                          setIsUploadingCalPdf(false);
+                          if (e.target) e.target.value = '';
+                        }
+                      }}
+                    />
+
+                    {newEventAttachedPdf ? (
+                      <div className="p-3 bg-white rounded-xl border border-rose-200 flex items-center justify-between gap-2 shadow-2xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 font-black text-xs flex items-center justify-center shrink-0">
+                            PDF
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 truncate">
+                              {newEventAttachedPdf.fileName}
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              {formatFileSize(newEventAttachedPdf.fileSize)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const link = document.createElement('a');
+                              link.href = newEventAttachedPdf.fileData;
+                              link.download = newEventAttachedPdf.fileName;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }}
+                            className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                            title="Télécharger / Prévisualiser"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewEventAttachedPdf(null)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Supprimer la pièce jointe"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setIsPdfDraggingInCalForm(true); }}
+                        onDragLeave={() => setIsPdfDraggingInCalForm(false)}
+                        onDrop={async (e) => {
+                          e.preventDefault();
+                          setIsPdfDraggingInCalForm(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (!file) return;
+                          try {
+                            setIsUploadingCalPdf(true);
+                            const doc = await readFileAsAttachedPdf(file);
+                            setNewEventAttachedPdf(doc);
+                          } catch (err: any) {
+                            alert(err?.message || "Erreur de lecture du PDF.");
+                          } finally {
+                            setIsUploadingCalPdf(false);
+                          }
+                        }}
+                        onClick={() => calFormPdfInputRef.current?.click()}
+                        className={`p-3.5 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-1.5 text-center cursor-pointer transition-all ${
+                          isPdfDraggingInCalForm 
+                            ? 'border-rose-500 bg-rose-100/80 scale-[1.01]' 
+                            : 'border-rose-300 hover:border-rose-500 bg-white/70 hover:bg-white'
+                        }`}
+                      >
+                        <FileUp className="w-5 h-5 text-rose-600" />
+                        <span className="text-xs font-bold text-rose-950">
+                          {isUploadingCalPdf ? "Chargement du document..." : "Glissez un fichier PDF ou cliquez pour joindre"}
+                        </span>
+                        <span className="text-[10px] text-rose-700/80">
+                          Fiche infos, règlement, convocation, plan de parcours...
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
