@@ -16,7 +16,7 @@ import {
   Calendar as CalendarIcon, PlusCircle, Loader2, Share2, 
   Trash2, Edit3, Download, FileUp, ShieldCheck, Clock, MapPin, Sparkles, Lock,
   ArrowRight, CheckCircle2, Circle, AlertCircle, Compass, CalendarDays, Zap, Flame, Check,
-  Layers, Moon, History, ChevronDown, Repeat, Timer, Search, HelpCircle, Link2, Eye
+  Layers, Moon, History, ChevronDown, Repeat, Timer, Search, HelpCircle, Link2, Eye, Sliders, ClipboardCheck
 } from 'lucide-react';
 import { RegistrationFormDoc } from '../types';
 import { RegistrationFormModal } from './RegistrationFormModal';
@@ -178,11 +178,29 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
 
   // Gestion des pièces jointes PDF (Recueil d'informations utiles)
   const [newEventAttachedPdf, setNewEventAttachedPdf] = useState<AttachedPdfDoc | null>(null);
+  const [viewingPdfDoc, setViewingPdfDoc] = useState<AttachedPdfDoc | null>(null);
   const [isPdfDraggingInCalForm, setIsPdfDraggingInCalForm] = useState(false);
   const [isPdfDraggingOnSelectedModal, setIsPdfDraggingOnSelectedModal] = useState(false);
   const [isUploadingCalPdf, setIsUploadingCalPdf] = useState(false);
   const calFormPdfInputRef = useRef<HTMLInputElement>(null);
   const selectedModalPdfInputRef = useRef<HTMLInputElement>(null);
+
+  // Onglet dans la modale de modification d'une séance : 'params' ou 'attendance'
+  const [editModalTab, setEditModalTab] = useState<'params' | 'attendance'>('params');
+  const [calendarEditStudentSearch, setCalendarEditStudentSearch] = useState('');
+  const [calendarEditAttendanceFilter, setCalendarEditAttendanceFilter] = useState<'all' | 'present' | 'absent'>('all');
+  const [calendarEditAttendanceSearch, setCalendarEditAttendanceSearch] = useState('');
+
+  // Détection si l'utilisateur est enseignant ou administrateur
+  const isTeacherOrAdmin = useMemo(() => {
+    if (!isPublic) return true;
+    if (typeof window === 'undefined') return false;
+    return (
+      localStorage.getItem('teacher_auth') === 'true' ||
+      localStorage.getItem('admin_token') !== null ||
+      sessionStorage.getItem('teacher_auth') === 'true'
+    );
+  }, [isPublic]);
 
   // Copie/Partage direct du lien d'inscription
   const [copiedLinkEventId, setCopiedLinkEventId] = useState<string | null>(null);
@@ -568,6 +586,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventAttachedPdf(session.attachedPdf || null);
     setClickedDate(new Date(session.date));
     setEditingEventId(event.id);
+    setEditModalTab('params');
+    setCalendarEditStudentSearch('');
+    setCalendarEditAttendanceFilter('all');
+    setCalendarEditAttendanceSearch('');
     setIsCreatingEvent(true);
     setSelectedEvent(null);
   };
@@ -578,13 +600,29 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     try {
       const doc = await readFileAsAttachedPdf(file);
       if (selectedEvent.type === 'session') {
-        const updatedSession = { ...(selectedEvent.raw as Session), attachedPdf: doc };
+        const rawSession = selectedEvent.raw as Session;
+        const updatedSession = { ...rawSession, attachedPdf: doc };
         await saveSessionApi(updatedSession);
+        if (rawSession.convocationId) {
+          try {
+            await saveConvocationApi({ id: rawSession.convocationId, attachedPdf: doc });
+          } catch (cErr) {
+            console.warn('Erreur synchronisation convocation liée avec le PDF:', cErr);
+          }
+        }
         setSelectedEvent({ ...selectedEvent, raw: updatedSession });
         setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedSession } : e));
       } else {
-        const updatedConv = { ...(selectedEvent.raw as Convocation), attachedPdf: doc };
+        const rawConv = selectedEvent.raw as Convocation;
+        const updatedConv = { ...rawConv, attachedPdf: doc };
         await saveConvocationApi(updatedConv);
+        if (rawConv.sessionId) {
+          try {
+            await saveSessionApi({ id: rawConv.sessionId, attachedPdf: doc });
+          } catch (sErr) {
+            console.warn('Erreur synchronisation séance liée avec le PDF:', sErr);
+          }
+        }
         setSelectedEvent({ ...selectedEvent, raw: updatedConv });
         setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedConv } : e));
       }
@@ -603,13 +641,25 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setIsUploadingCalPdf(true);
     try {
       if (selectedEvent.type === 'session') {
-        const updatedSession = { ...(selectedEvent.raw as Session), attachedPdf: null };
+        const rawSession = selectedEvent.raw as Session;
+        const updatedSession = { ...rawSession, attachedPdf: null };
         await saveSessionApi(updatedSession);
+        if (rawSession.convocationId) {
+          try {
+            await saveConvocationApi({ id: rawSession.convocationId, attachedPdf: null });
+          } catch {}
+        }
         setSelectedEvent({ ...selectedEvent, raw: updatedSession });
         setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedSession } : e));
       } else {
-        const updatedConv = { ...(selectedEvent.raw as Convocation), attachedPdf: null };
+        const rawConv = selectedEvent.raw as Convocation;
+        const updatedConv = { ...rawConv, attachedPdf: null };
         await saveConvocationApi(updatedConv);
+        if (rawConv.sessionId) {
+          try {
+            await saveSessionApi({ id: rawConv.sessionId, attachedPdf: null });
+          } catch {}
+        }
         setSelectedEvent({ ...selectedEvent, raw: updatedConv });
         setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updatedConv } : e));
       }
@@ -1093,9 +1143,11 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }, 250);
   };
 
-  const toggleCalendarAttendance = async (studentId: string) => {
-    if (!selectedEvent || selectedEvent.type !== 'session') return;
-    const sess = selectedEvent.raw as Session;
+  const toggleCalendarAttendance = async (studentId: string, targetEventId?: string) => {
+    const targetId = targetEventId || editingEventId || selectedEvent?.id;
+    const ev = events.find(e => e.id === targetId) || (selectedEvent?.id === targetId ? selectedEvent : null);
+    if (!ev || ev.type !== 'session') return;
+    const sess = ev.raw as Session;
     const present = new Set(sess.presentStudentIds || []);
     if (present.has(studentId)) {
       present.delete(studentId);
@@ -1104,8 +1156,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
     const newPresent = Array.from(present);
     const updated: Session = { ...sess, presentStudentIds: newPresent };
-    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
-    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    if (selectedEvent && selectedEvent.id === targetId) {
+      setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    }
+    setEvents(prev => prev.map(e => e.id === targetId ? { ...e, raw: updated } : e));
     try {
       await saveSessionApi(updated);
     } catch (e) {
@@ -1113,13 +1167,17 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
   };
 
-  const markAllCalendarPresent = async () => {
-    if (!selectedEvent || selectedEvent.type !== 'session') return;
-    const sess = selectedEvent.raw as Session;
+  const markAllCalendarPresent = async (targetEventId?: string) => {
+    const targetId = targetEventId || editingEventId || selectedEvent?.id;
+    const ev = events.find(e => e.id === targetId) || (selectedEvent?.id === targetId ? selectedEvent : null);
+    if (!ev || ev.type !== 'session') return;
+    const sess = ev.raw as Session;
     const allEnrolled = sess.enrolledStudentIds || [];
     const updated: Session = { ...sess, presentStudentIds: allEnrolled };
-    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
-    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    if (selectedEvent && selectedEvent.id === targetId) {
+      setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    }
+    setEvents(prev => prev.map(e => e.id === targetId ? { ...e, raw: updated } : e));
     try {
       await saveSessionApi(updated);
     } catch (e) {
@@ -1127,12 +1185,16 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
   };
 
-  const resetCalendarAttendance = async () => {
-    if (!selectedEvent || selectedEvent.type !== 'session') return;
-    const sess = selectedEvent.raw as Session;
+  const resetCalendarAttendance = async (targetEventId?: string) => {
+    const targetId = targetEventId || editingEventId || selectedEvent?.id;
+    const ev = events.find(e => e.id === targetId) || (selectedEvent?.id === targetId ? selectedEvent : null);
+    if (!ev || ev.type !== 'session') return;
+    const sess = ev.raw as Session;
     const updated: Session = { ...sess, presentStudentIds: [] };
-    setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
-    setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, raw: updated } : e));
+    if (selectedEvent && selectedEvent.id === targetId) {
+      setSelectedEvent(prev => prev ? { ...prev, raw: updated } : null);
+    }
+    setEvents(prev => prev.map(e => e.id === targetId ? { ...e, raw: updated } : e));
     try {
       await saveSessionApi(updated);
     } catch (e) {
@@ -1140,10 +1202,12 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
   };
 
-  const addStudentToCalendarEvent = async (studentId: string, markPresent = false) => {
-    if (!selectedEvent) return;
-    if (selectedEvent.type === 'session') {
-      const sess = selectedEvent.raw as Session;
+  const addStudentToCalendarEvent = async (studentId: string, markPresent = false, targetEventId?: string) => {
+    const targetId = targetEventId || editingEventId || selectedEvent?.id;
+    const ev = events.find(e => e.id === targetId) || (selectedEvent?.id === targetId ? selectedEvent : null);
+    if (!ev) return;
+    if (ev.type === 'session') {
+      const sess = ev.raw as Session;
       const enrolled = new Set(sess.enrolledStudentIds || []);
       enrolled.add(studentId);
       const newEnrolled = Array.from(enrolled);
@@ -1151,8 +1215,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
       if (markPresent) present.add(studentId);
       const newPresent = Array.from(present);
       const updated: Session = { ...sess, enrolledStudentIds: newEnrolled, presentStudentIds: newPresent };
-      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
-      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      if (selectedEvent && selectedEvent.id === targetId) {
+        setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      }
+      setEvents(prev => prev.map(e => e.id === targetId ? { ...e, studentIds: newEnrolled, raw: updated } : e));
       try {
         await saveSessionApi(updated);
         setCalendarActionNotice("✅ Élève inscrit à la séance !");
@@ -1161,13 +1227,15 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         console.error(e);
       }
     } else {
-      const conv = selectedEvent.raw as Convocation;
+      const conv = ev.raw as Convocation;
       const enrolled = new Set(conv.studentIds || []);
       enrolled.add(studentId);
       const newEnrolled = Array.from(enrolled);
       const updated: Convocation = { ...conv, studentIds: newEnrolled };
-      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
-      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      if (selectedEvent && selectedEvent.id === targetId) {
+        setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      }
+      setEvents(prev => prev.map(e => e.id === targetId ? { ...e, studentIds: newEnrolled, raw: updated } : e));
       try {
         await saveConvocationApi(updated);
         setCalendarActionNotice("✅ Élève ajouté à la convocation !");
@@ -1178,15 +1246,19 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     }
   };
 
-  const removeStudentFromCalendarEvent = async (studentId: string) => {
-    if (!selectedEvent) return;
-    if (selectedEvent.type === 'session') {
-      const sess = selectedEvent.raw as Session;
+  const removeStudentFromCalendarEvent = async (studentId: string, targetEventId?: string) => {
+    const targetId = targetEventId || editingEventId || selectedEvent?.id;
+    const ev = events.find(e => e.id === targetId) || (selectedEvent?.id === targetId ? selectedEvent : null);
+    if (!ev) return;
+    if (ev.type === 'session') {
+      const sess = ev.raw as Session;
       const newEnrolled = (sess.enrolledStudentIds || []).filter(id => id !== studentId);
       const newPresent = (sess.presentStudentIds || []).filter(id => id !== studentId);
       const updated: Session = { ...sess, enrolledStudentIds: newEnrolled, presentStudentIds: newPresent };
-      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
-      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      if (selectedEvent && selectedEvent.id === targetId) {
+        setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      }
+      setEvents(prev => prev.map(e => e.id === targetId ? { ...e, studentIds: newEnrolled, raw: updated } : e));
       try {
         await saveSessionApi(updated);
         setCalendarActionNotice("Élève retiré de la séance.");
@@ -1195,11 +1267,13 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
         console.error(e);
       }
     } else {
-      const conv = selectedEvent.raw as Convocation;
+      const conv = ev.raw as Convocation;
       const newEnrolled = (conv.studentIds || []).filter(id => id !== studentId);
       const updated: Convocation = { ...conv, studentIds: newEnrolled };
-      setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
-      setEvents(prev => prev.map(e => e.id === selectedEvent.id ? { ...e, studentIds: newEnrolled, raw: updated } : e));
+      if (selectedEvent && selectedEvent.id === targetId) {
+        setSelectedEvent(prev => prev ? { ...prev, studentIds: newEnrolled, raw: updated } : null);
+      }
+      setEvents(prev => prev.map(e => e.id === targetId ? { ...e, studentIds: newEnrolled, raw: updated } : e));
       try {
         await saveConvocationApi(updated);
         setCalendarActionNotice("Élève retiré de la convocation.");
@@ -3124,9 +3198,14 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
 
                   {/* Pièce jointe / Document PDF (Séances & Convocations) */}
                   {(() => {
-                    const currentDoc = selectedEvent.type === 'session' 
-                      ? (selectedEvent.raw as Session).attachedPdf 
-                      : (selectedEvent.raw as Convocation).attachedPdf;
+                    const rawSession = selectedEvent.type === 'session' ? (selectedEvent.raw as Session) : null;
+                    const rawConv = selectedEvent.type === 'convocation' ? (selectedEvent.raw as Convocation) : null;
+                    const linkedEvent = selectedEvent.type === 'session' && rawSession?.convocationId
+                      ? events.find(e => e.id === rawSession.convocationId)
+                      : selectedEvent.type === 'convocation' && rawConv?.sessionId
+                      ? events.find(e => e.id === rawConv.sessionId)
+                      : null;
+                    const currentDoc = (rawSession?.attachedPdf || rawConv?.attachedPdf || (linkedEvent?.raw as any)?.attachedPdf) || null;
 
                     return (
                       <div className="mt-3">
@@ -3177,7 +3256,18 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                                 <Download className="w-3.5 h-3.5" />
                                 <span>Télécharger</span>
                               </button>
-                              {!isPublic && (
+                              {isTeacherOrAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => selectedModalPdfInputRef.current?.click()}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
+                                  title="Remplacer par un nouveau document PDF"
+                                >
+                                  <FileUp className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">Remplacer</span>
+                                </button>
+                              )}
+                              {isTeacherOrAdmin && (
                                 <button
                                   type="button"
                                   onClick={handleDeletePdfFromSelectedEvent}
@@ -3189,7 +3279,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                               )}
                             </div>
                           </div>
-                        ) : !isPublic ? (
+                        ) : isTeacherOrAdmin ? (
                           <div
                             onDragOver={(e) => { e.preventDefault(); setIsPdfDraggingOnSelectedModal(true); }}
                             onDragLeave={() => setIsPdfDraggingOnSelectedModal(false)}
@@ -3780,14 +3870,14 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           }}
         >
           <div 
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
+            className={`bg-white rounded-2xl shadow-2xl w-full ${editingEventId && editModalTab === 'attendance' ? 'max-w-3xl' : 'max-w-xl'} max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header fixe toujours visible avec bouton de fermeture croix */}
             <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/90">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-100">
-                  <PlusCircle className="w-5 h-5 text-indigo-600" />
+                  {editingEventId ? <Edit3 className="w-5 h-5 text-indigo-600" /> : <PlusCircle className="w-5 h-5 text-indigo-600" />}
                 </div>
                 <div>
                   <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
@@ -3800,16 +3890,397 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               </div>
               <button
                 type="button"
-                onClick={() => setIsCreatingEvent(false)}
+                onClick={() => {
+                  setIsCreatingEvent(false);
+                  setEditingEventId(null);
+                }}
                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer"
                 title="Fermer la fenêtre (Échap)"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
+            {/* Onglets sous-mode modification : Paramètres ou Pointage d'appel & Ajout manuel */}
+            {editingEventId && (
+              <div className="px-4 sm:px-6 py-2.5 bg-indigo-50/70 border-b border-indigo-100 flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditModalTab('params')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      editModalTab === 'params'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Paramètres & Horaires</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditModalTab('attendance')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      editModalTab === 'attendance'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5" />
+                    <span>Pointage d'appel & Élèves</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                      editModalTab === 'attendance' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}>
+                      {((events.find(ev => ev.id === editingEventId)?.raw as Session)?.enrolledStudentIds || []).length}
+                    </span>
+                  </button>
+                </div>
+                {editModalTab === 'attendance' && (
+                  <span className="text-xs text-indigo-700 font-bold hidden sm:inline">
+                    Pointage direct actif
+                  </span>
+                )}
+              </div>
+            )}
+
+            {editingEventId && editModalTab === 'attendance' ? (() => {
+              const editingEv = events.find(e => e.id === editingEventId);
+              const editingSess = editingEv?.raw as Session | undefined;
+              const enrolledIds = editingSess?.enrolledStudentIds || [];
+              const presentSet = new Set(editingSess?.presentStudentIds || []);
+              const enrolledList = getEnrolledStudents(enrolledIds);
+              const presentCount = enrolledList.filter(s => presentSet.has(s.id)).length;
+
+              const searchEnrolledQ = calendarEditAttendanceSearch.trim().toLowerCase();
+              const displayEnrolled = enrolledList.filter(s => {
+                if (calendarEditAttendanceFilter === 'present' && !presentSet.has(s.id)) return false;
+                if (calendarEditAttendanceFilter === 'absent' && presentSet.has(s.id)) return false;
+                if (!searchEnrolledQ) return true;
+                const full = `${s.lastName || ''} ${s.firstName || ''}`.toLowerCase();
+                const cls = (s.classGroup || '').toLowerCase();
+                return full.includes(searchEnrolledQ) || cls.includes(searchEnrolledQ);
+              });
+
+              const searchManualQ = calendarEditStudentSearch.trim().toLowerCase();
+              const enrolledSet = new Set(enrolledIds);
+              const displayAvailable = searchManualQ.length >= 1
+                ? effectiveStudents
+                    .filter(s => !enrolledSet.has(s.id))
+                    .filter(s => {
+                      const full = `${s.lastName || ''} ${s.firstName || ''}`.toLowerCase();
+                      const cls = (s.classGroup || '').toLowerCase();
+                      return full.includes(searchManualQ) || cls.includes(searchManualQ);
+                    })
+                    .slice(0, 20)
+                : effectiveStudents
+                    .filter(s => !enrolledSet.has(s.id))
+                    .slice(0, 10);
+
+              return (
+                <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-4 sm:p-5 space-y-4">
+                  {/* Notification d'action rapide */}
+                  {calendarActionNotice && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-900 flex items-center gap-2 animate-in fade-in">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{calendarActionNotice}</span>
+                    </div>
+                  )}
+
+                  {/* Bandeau récapitulatif */}
+                  <div className="p-3.5 bg-gradient-to-r from-indigo-50 via-purple-50 to-slate-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shrink-0 shadow-2xs">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-slate-900 text-sm sm:text-base">{editingSess?.name || newEventName}</span>
+                        <span className="text-xs bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-full border border-indigo-200 capitalize">
+                          {format(clickedDate, 'EEEE d MMMM yyyy', { locale: fr })}
+                        </span>
+                        {editingSess?.time && (
+                          <span className="text-xs text-slate-600 font-semibold">
+                            🕒 {editingSess.time} {editingSess.endTime ? `- ${editingSess.endTime}` : ''}
+                          </span>
+                        )}
+                        {editingSess?.location && (
+                          <span className="text-xs text-slate-600">
+                            📍 {editingSess.location}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Pointage d'appel et ajout manuel d'élèves en direct sur ce créneau. Les inscriptions et présences sont sauvegardées instantanément.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditModalTab('params')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200 shadow-2xs transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Paramètres du créneau</span>
+                    </button>
+                  </div>
+
+                  {/* 2 Colonnes : Pointage d'appel & Tous les élèves (Ajout manuel) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 min-h-0 overflow-hidden">
+                    
+                    {/* Colonne 1 : Inscrits et Pointage d'appel */}
+                    <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                      <div className="bg-slate-100 p-2.5 sm:p-3 border-b border-slate-200 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800 text-sm">Pointage d'appel</span>
+                            <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border border-slate-200 text-indigo-700">
+                              {presentCount} / {enrolledList.length} présents
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => markAllCalendarPresent(editingEventId)}
+                              disabled={enrolledList.length === 0}
+                              className="px-2 py-1 text-[11px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              title="Pointer tous les élèves inscrits comme présents"
+                            >
+                              Tout pointer
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => resetCalendarAttendance(editingEventId)}
+                              disabled={presentCount === 0}
+                              className="px-2 py-1 text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              title="Réinitialiser le pointage (marquer tous absents)"
+                            >
+                              Réinitialiser
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Filtres internes Présents / Absents / Tous & recherche rapide */}
+                        <div className="flex flex-col sm:flex-row gap-1.5 pt-1 border-t border-slate-200/60">
+                          <div className="flex bg-white rounded-lg p-0.5 border border-slate-200 text-[11px] font-bold shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setCalendarEditAttendanceFilter('all')}
+                              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                                calendarEditAttendanceFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              Tous ({enrolledList.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCalendarEditAttendanceFilter('present')}
+                              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                                calendarEditAttendanceFilter === 'present' ? 'bg-emerald-600 text-white' : 'text-emerald-700 hover:bg-emerald-50'
+                              }`}
+                            >
+                              Présents ({presentCount})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCalendarEditAttendanceFilter('absent')}
+                              className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                                calendarEditAttendanceFilter === 'absent' ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'
+                              }`}
+                            >
+                              Absents ({Math.max(0, enrolledList.length - presentCount)})
+                            </button>
+                          </div>
+
+                          <div className="relative flex-1">
+                            <input
+                              type="text"
+                              placeholder="Filtrer les inscrits..."
+                              value={calendarEditAttendanceSearch}
+                              onChange={e => setCalendarEditAttendanceSearch(e.target.value)}
+                              className="w-full pl-7 pr-2 py-1 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5 pointer-events-none" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[260px] max-h-[380px]">
+                        {displayEnrolled.map(s => {
+                          const isPresent = presentSet.has(s.id);
+                          return (
+                            <div key={`edit_cal_enrolled_${s.id}`} className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                              isPresent ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs' : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}>
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <button 
+                                  type="button" 
+                                  onClick={() => toggleCalendarAttendance(s.id, editingEventId)}
+                                  className={`p-1 rounded-full transition-transform active:scale-90 cursor-pointer ${
+                                    isPresent ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-500'
+                                  }`}
+                                  title={isPresent ? "Cliquer pour marquer absent" : "Cliquer pour marquer présent"}
+                                >
+                                  {isPresent ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
+                                </button>
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap text-xs sm:text-sm">
+                                    <span className="truncate">{s.lastName} {s.firstName}</span>
+                                    {isPresent && (
+                                      <span className="bg-emerald-200 text-emerald-900 text-[9px] font-black px-1.5 py-0.2 rounded uppercase">
+                                        Présent ✓
+                                      </span>
+                                    )}
+                                    {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                    {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
+                                  </div>
+                                  <span className="text-[11px] text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                                </div>
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={() => removeStudentFromCalendarEvent(s.id, editingEventId)}
+                                className="text-xs text-slate-400 hover:text-red-600 hover:bg-red-50 rounded px-2 py-1 transition-colors shrink-0 cursor-pointer"
+                                title="Désinscrire de la séance"
+                              >
+                                Retirer
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {enrolledList.length === 0 && (
+                          <div className="p-6 text-center space-y-1.5">
+                            <Users className="w-7 h-7 text-slate-300 mx-auto" />
+                            <p className="text-xs font-semibold text-slate-600">Aucun élève inscrit sur ce créneau</p>
+                            <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                              Utilisez la colonne de droite pour inscrire des élèves ou les pointer directement présents en 1 clic.
+                            </p>
+                          </div>
+                        )}
+                        {enrolledList.length > 0 && displayEnrolled.length === 0 && (
+                          <p className="text-center text-slate-400 py-6 text-xs italic">
+                            Aucun inscrit ne correspond au filtre.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Colonne 2 : Annuaire complet des élèves (Ajout manuel) */}
+                    <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                      <div className="bg-slate-50 p-2.5 sm:p-3 border-b border-slate-200 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-700 text-sm">
+                            Élèves disponibles (Ajout manuel)
+                          </span>
+                          <span className="text-[10px] text-indigo-700 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                            💡 Inscrire ou pointer en 1 clic
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Rechercher par nom, prénom, classe..."
+                            value={calendarEditStudentSearch}
+                            onChange={e => setCalendarEditStudentSearch(e.target.value)}
+                            className="w-full pl-7 pr-7 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5 pointer-events-none" />
+                          {calendarEditStudentSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setCalendarEditStudentSearch('')}
+                              className="absolute right-2 top-1 text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[260px] max-h-[380px]">
+                        {displayAvailable.map(s => {
+                          return (
+                            <div key={`edit_cal_avail_${s.id}`} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-lg transition-colors border border-transparent hover:border-slate-200 gap-2">
+                              <div className="min-w-0">
+                                <div className="font-medium text-slate-800 flex items-center gap-1.5 flex-wrap text-xs sm:text-sm">
+                                  <span className="font-semibold truncate">{s.lastName} {s.firstName}</span>
+                                  {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                  {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
+                                </div>
+                                <span className="text-[11px] text-slate-400">{s.classGroup || 'Sans classe'}</span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => addStudentToCalendarEvent(s.id, true, editingEventId)}
+                                  className="text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-xs cursor-pointer"
+                                  title="Inscrire et pointer présent immédiatement"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Pointer présent</span>
+                                </button>
+                                <button 
+                                  type="button" 
+                                  onClick={() => addStudentToCalendarEvent(s.id, false, editingEventId)}
+                                  className="text-xs px-2.5 py-1 rounded-lg font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                                  title="Inscrire sans pointer présent"
+                                >
+                                  Inscrire
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {displayAvailable.length === 0 && (
+                          <p className="text-center text-slate-400 py-8 text-xs italic">
+                            Aucun élève non-inscrit trouvé.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Footer mode appel */}
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setEditModalTab('params')}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>← Revenir aux paramètres</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingEvent(false);
+                        setEditingEventId(null);
+                        loadCalendarData();
+                      }}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer"
+                    >
+                      Terminer et fermer
+                    </button>
+                  </div>
+                </div>
+              );
+            })() : (
             <form onSubmit={handleCreateEvent} className="flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="p-4 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+                {editingEventId && (
+                  <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2 text-indigo-900 font-medium min-w-0">
+                      <ClipboardCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span className="truncate">
+                        <strong>{((events.find(ev => ev.id === editingEventId)?.raw as Session)?.enrolledStudentIds || []).length} inscrit(s)</strong> • Vous pouvez faire l'appel et ajouter des élèves sur ce créneau.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditModalTab('attendance')}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors shrink-0 shadow-2xs cursor-pointer flex items-center gap-1"
+                    >
+                      <span>Faire l'appel & inscriptions</span>
+                      <span>→</span>
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/60 rounded-lg text-indigo-950 text-xs font-semibold border border-indigo-100">
                   <CalendarIcon className="w-4 h-4 text-indigo-600 shrink-0" />
                   <span>Date :</span>
@@ -4456,6 +4927,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 </div>
               </div>
             </form>
+            )}
           </div>
         </div>
       )}

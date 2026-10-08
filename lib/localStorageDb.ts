@@ -326,7 +326,8 @@ export function saveLocalConvocation(conv: Partial<Convocation>): Convocation {
     meetingLocation: conv.meetingLocation !== undefined ? conv.meetingLocation : existing?.meetingLocation,
     cafeteriaTime: conv.cafeteriaTime !== undefined ? conv.cafeteriaTime : existing?.cafeteriaTime,
     returnTime: conv.returnTime !== undefined ? conv.returnTime : existing?.returnTime,
-    selectedCriteria: conv.selectedCriteria !== undefined ? conv.selectedCriteria : existing?.selectedCriteria
+    selectedCriteria: conv.selectedCriteria !== undefined ? conv.selectedCriteria : existing?.selectedCriteria,
+    attachedPdf: conv.attachedPdf !== undefined ? conv.attachedPdf : (existing?.attachedPdf || null)
   };
 
   if (idx >= 0) {

@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
   Repeat, CalendarDays, Timer, Sparkles, Info, Lock, HelpCircle,
   FileText, FileUp, Download, Eye, X, Loader2,
-  Moon, Zap, Layers, Printer, Share2, Check
+  Moon, Zap, Layers, Printer, Share2, Check, Sliders, ClipboardCheck
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -59,6 +59,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   // Filtre et recherche internes pour le pointage d'appel (liste des inscrits)
   const [attendanceSearch, setAttendanceSearch] = useState('');
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'all' | 'present' | 'absent'>('all');
+  const [editManualStudentSearch, setEditManualStudentSearch] = useState('');
 
   const [isAsSoirHistoryOpen, setIsAsSoirHistoryOpen] = useState(false);
   const [isMercrediHistoryOpen, setIsMercrediHistoryOpen] = useState(false);
@@ -1213,6 +1214,23 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     });
   }, [students, searchTerm, activeSession?.targetAudience, formData.targetAudience]);
 
+  // Élèves disponibles pour ajout manuel dans le sous-mode modification
+  const editAvailableStudents = useMemo(() => {
+    const q = editManualStudentSearch.trim().toLowerCase();
+    return students.filter(student => {
+      if (q) {
+        const matchesSearch = (student.lastName || '').toLowerCase().includes(q) ||
+                              (student.firstName || '').toLowerCase().includes(q) ||
+                              (student.classGroup || '').toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+      }
+      const audience = (currentTargetSession?.targetAudience || formData.targetAudience || 'all');
+      if (audience === 'students' && student.isAdult) return false;
+      if (audience === 'adults' && !student.isAdult) return false;
+      return true;
+    });
+  }, [students, editManualStudentSearch, currentTargetSession?.targetAudience, formData.targetAudience]);
+
   // Liste des élèves inscrits pour le pointage d'appel (avec filtre présent/absent et recherche interne)
   const activeEnrolledStudents = useMemo(() => {
     const target = currentTargetSession;
@@ -1874,7 +1892,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       {/* Right Content */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
         {isCreating ? (
-          <form onSubmit={handleCreate} className="flex flex-col flex-1 h-full min-h-0 overflow-hidden">
+          <div className="flex flex-col flex-1 h-full min-h-0 overflow-hidden">
             <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
@@ -1885,7 +1903,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                     {formData.id ? 'Modifier la séance' : 'Créer une nouvelle séance'}
                   </h2>
                   <p className="text-xs text-slate-500">
-                    {formData.id ? 'Mise à jour des paramètres et options' : `Ajout d'un créneau dans l'année active (${activeYear})`}
+                    {formData.id ? 'Mise à jour des paramètres, pointage d\'appel et élèves' : `Ajout d'un créneau dans l'année active (${activeYear})`}
                   </p>
                 </div>
               </div>
@@ -1898,8 +1916,365 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 ✕
               </button>
             </div>
-            
-            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+
+            {/* Onglets sous-mode modification : Paramètres ou Pointage d'appel & Ajout manuel */}
+            {formData.id && (
+              <div className="px-4 sm:px-5 py-2.5 bg-indigo-50/50 border-b border-indigo-100 flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditSubTab('params')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      editSubTab === 'params'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Paramètres & Horaires</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditSubTab('attendance')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                      editSubTab === 'attendance'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5" />
+                    <span>Pointage d'appel & Inscriptions</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                      editSubTab === 'attendance' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}>
+                      {(currentTargetSession?.enrolledStudentIds || formData.enrolledStudentIds || []).length}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {editSubTab === 'attendance' && (
+                    <span className="text-xs text-indigo-700 font-bold hidden sm:inline">
+                      Pointage en direct actif
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {formData.id && editSubTab === 'attendance' ? (
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-4 sm:p-5 space-y-4">
+                {/* Bandeau récapitulatif du créneau en cours de modification */}
+                <div className="p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-slate-50 border border-indigo-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 shadow-2xs">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-slate-900 text-base">{formData.name}</span>
+                      <span className="text-xs bg-indigo-100 text-indigo-800 font-bold px-2.5 py-0.5 rounded-full border border-indigo-200">
+                        {formData.date ? new Date(formData.date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}
+                      </span>
+                      {formData.time && (
+                        <span className="text-xs text-slate-600 font-semibold flex items-center gap-1">
+                          🕒 {formData.time} {formData.endTime ? `- ${formData.endTime}` : ''}
+                        </span>
+                      )}
+                      {formData.location && (
+                        <span className="text-xs text-slate-600 font-medium flex items-center gap-1">
+                          📍 {formData.location}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Pointage d'appel et ajout manuel d'élèves en direct sur ce créneau. Les présences et inscriptions sont enregistrées instantanément.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setEditSubTab('params')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-indigo-700 text-xs font-bold rounded-xl border border-indigo-200 shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Paramètres du créneau</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2 Colonnes : Pointage d'appel & Tous les élèves (Ajout manuel) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0 overflow-hidden">
+                  
+                  {/* Colonne 1 : Inscrits et Pointage d'appel */}
+                  <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                    <div className="bg-slate-100 p-3 border-b border-slate-200 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-800 text-sm">Pointage d'appel</span>
+                          <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border border-slate-200 text-indigo-700">
+                            {(currentTargetSession?.presentStudentIds || []).length} / {(currentTargetSession?.enrolledStudentIds || []).length} présents
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={markAllPresent}
+                            disabled={!currentTargetSession?.enrolledStudentIds || currentTargetSession.enrolledStudentIds.length === 0}
+                            className="px-2 py-1 text-[11px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                            title="Pointer tous les élèves inscrits comme présents"
+                          >
+                            Tout pointer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={markAllAbsent}
+                            disabled={!currentTargetSession?.presentStudentIds || currentTargetSession.presentStudentIds.length === 0}
+                            className="px-2 py-1 text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                            title="Réinitialiser le pointage (marquer tous absents)"
+                          >
+                            Réinitialiser
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Filtres internes Présents / Absents / Tous & recherche rapide */}
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1 border-t border-slate-200/60">
+                        <div className="flex bg-white rounded-lg p-0.5 border border-slate-200 text-[11px] font-bold shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setAttendanceStatusFilter('all')}
+                            className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                              attendanceStatusFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Tous ({(currentTargetSession?.enrolledStudentIds || []).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAttendanceStatusFilter('present')}
+                            className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                              attendanceStatusFilter === 'present' ? 'bg-emerald-600 text-white' : 'text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                          >
+                            Présents ({(currentTargetSession?.presentStudentIds || []).length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAttendanceStatusFilter('absent')}
+                            className={`px-2 py-1 rounded transition-colors cursor-pointer ${
+                              attendanceStatusFilter === 'absent' ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'
+                            }`}
+                          >
+                            Absents ({Math.max(0, (currentTargetSession?.enrolledStudentIds || []).length - (currentTargetSession?.presentStudentIds || []).length)})
+                          </button>
+                        </div>
+
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            placeholder="Filtrer les inscrits..."
+                            value={attendanceSearch}
+                            onChange={e => setAttendanceSearch(e.target.value)}
+                            className="w-full pl-7 pr-2 py-1 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5 pointer-events-none" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[300px]">
+                      {activeEnrolledStudents.map(s => {
+                        const isPresent = (currentTargetSession?.presentStudentIds || []).includes(s.id);
+                        return (
+                          <div key={`edit_enrolled_${s.id}`} className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
+                            isPresent ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs' : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <button 
+                                type="button" 
+                                onClick={() => toggleAttendance(s.id)}
+                                className={`p-1 rounded-full transition-transform active:scale-90 cursor-pointer ${
+                                  isPresent ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-500'
+                                }`}
+                                title={isPresent ? "Cliquer pour marquer absent" : "Cliquer pour marquer présent"}
+                              >
+                                {isPresent ? <CheckCircle2 className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
+                              </button>
+                              <div className="min-w-0">
+                                <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                  <span className="truncate">{s.lastName} {s.firstName}</span>
+                                  {isPresent && (
+                                    <span className="bg-emerald-200 text-emerald-900 text-[10px] font-black px-1.5 py-0.2 rounded uppercase">
+                                      Présent ✓
+                                    </span>
+                                  )}
+                                  {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                  {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                                  {currentTargetSession?.survey?.enabled && currentTargetSession.surveyResponses?.[s.id] && (
+                                    <span className="inline-flex items-center gap-1 bg-sky-100 text-sky-900 border border-sky-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate max-w-[150px]" title={`Choix sondage: ${Array.isArray(currentTargetSession.surveyResponses[s.id]) ? currentTargetSession.surveyResponses[s.id].join(', ') : currentTargetSession.surveyResponses[s.id]}`}>
+                                      <span>🗳️</span>
+                                      <span className="truncate">{Array.isArray(currentTargetSession.surveyResponses[s.id]) ? currentTargetSession.surveyResponses[s.id].join(', ') : currentTargetSession.surveyResponses[s.id]}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <button 
+                              type="button" 
+                              onClick={() => toggleEnrollment(s.id)}
+                              className="text-xs text-slate-400 hover:text-red-600 hover:bg-red-50 rounded px-2 py-1 transition-colors shrink-0 cursor-pointer"
+                              title="Désinscrire de la séance"
+                            >
+                              Retirer
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {(currentTargetSession?.enrolledStudentIds || []).length === 0 && (
+                        <div className="p-8 text-center space-y-2">
+                          <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                          <p className="text-sm font-semibold text-slate-600">Aucun élève inscrit sur ce créneau</p>
+                          <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                            Utilisez la liste de droite pour inscrire des élèves ou les pointer directement présents en 1 clic.
+                          </p>
+                        </div>
+                      )}
+                      {(currentTargetSession?.enrolledStudentIds || []).length > 0 && activeEnrolledStudents.length === 0 && (
+                        <p className="text-center text-slate-400 py-6 text-xs italic">
+                          Aucun inscrit ne correspond au filtre sélectionné.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Colonne 2 : Annuaire complet des élèves (Ajout manuel) */}
+                  <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                    <div className="bg-slate-50 p-2.5 sm:p-3 border-b border-slate-200 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-700 text-sm">
+                          Annuaire des élèves ({editAvailableStudents.length})
+                        </span>
+                        <span className="text-[10px] text-indigo-700 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                          💡 Inscrire ou pointer présent en 1 clic
+                        </span>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Rechercher un élève par nom, prénom, classe..."
+                          value={editManualStudentSearch}
+                          onChange={e => setEditManualStudentSearch(e.target.value)}
+                          className="w-full pl-7 pr-7 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                        />
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1.5 pointer-events-none" />
+                        {editManualStudentSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setEditManualStudentSearch('')}
+                            className="absolute right-2 top-1 text-slate-400 hover:text-slate-600 text-xs cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[300px]">
+                      {editAvailableStudents.map(s => {
+                        const isEnrolled = (currentTargetSession?.enrolledStudentIds || []).includes(s.id);
+                        const isPresent = (currentTargetSession?.presentStudentIds || []).includes(s.id);
+
+                        return (
+                          <div key={`edit_all_${s.id}`} className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-lg transition-colors border border-transparent hover:border-slate-200 gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-semibold truncate">{s.lastName} {s.firstName}</span>
+                                  {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
+                                  {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
+                              </div>
+                              <span className="text-xs text-slate-400">{s.classGroup || 'Sans classe'}</span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {/* Bouton Appel Direct (Inscrire + Pointer présent en un clic) */}
+                              <button
+                                type="button"
+                                onClick={() => quickToggleDirectAttendance(s.id)}
+                                className={`text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                  isPresent
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                                    : isEnrolled
+                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      : 'bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white shadow-xs'
+                                }`}
+                                title={isPresent ? "Cliquer pour retirer des présents" : "Pointer présent à cette séance (inscrit automatiquement)"}
+                              >
+                                {isPresent ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                                <span>{isPresent ? 'Présent ✓' : 'Pointer présent'}</span>
+                              </button>
+
+                              {/* Bouton Inscription simple */}
+                              <button 
+                                type="button" 
+                                onClick={() => toggleEnrollment(s.id)}
+                                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                                  isEnrolled 
+                                    ? 'bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-600' 
+                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                }`}
+                                title={isEnrolled ? "Désinscrire de la séance" : "Inscrire sans pointer présent"}
+                              >
+                                {isEnrolled ? 'Désinscrire' : 'Inscrire'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Footer mode appel */}
+                <div className="pt-3 border-t border-slate-200 flex items-center justify-between shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setEditSubTab('params')}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>← Revenir aux paramètres</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsCreating(false)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-xl font-bold text-xs transition-all shadow-xs cursor-pointer"
+                  >
+                    Terminer et fermer
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleCreate} className="flex flex-col flex-1 h-full min-h-0 overflow-hidden">
+                <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+                  {formData.id && (
+                    <div className="bg-indigo-50/80 border border-indigo-200 rounded-xl p-3 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2 text-indigo-950 font-medium min-w-0">
+                        <ClipboardCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span className="truncate">
+                          <strong>{(currentTargetSession?.enrolledStudentIds || []).length} élève(s) inscrit(s)</strong> • Vous pouvez faire l'appel et inscrire des élèves en direct.
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setEditSubTab('attendance')}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold rounded-lg transition-all shrink-0 shadow-2xs cursor-pointer flex items-center gap-1.5"
+                      >
+                        <ClipboardCheck className="w-3.5 h-3.5" />
+                        <span>Faire l'appel & inscriptions</span>
+                        <span>→</span>
+                      </button>
+                    </div>
+                  )}
               {/* BANNIÈRE DE GESTION DE CRÉNEAU RÉCURRENT LORS DE LA MODIFICATION */}
               {formData.id && (() => {
                 const currentSeries = getSeriesSessions(formData, sessions);
@@ -3110,7 +3485,9 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 )}
               </button>
             </div>
-          </form>
+              </form>
+            )}
+          </div>
         ) : activeSession ? (
           <div 
             className="flex flex-col h-full relative"

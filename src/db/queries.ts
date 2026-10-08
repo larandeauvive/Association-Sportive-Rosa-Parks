@@ -617,6 +617,7 @@ export async function createConvocation(data: Omit<Convocation, 'id'> & { id?: s
       cafeteriaTime: data.cafeteriaTime || null,
       returnTime: data.returnTime || null,
       selectedCriteria: data.selectedCriteria || null,
+      attachedPdf: data.attachedPdf || null,
     });
     return id;
   } catch (error) {
@@ -646,6 +647,7 @@ export async function updateConvocationById(id: string, data: Partial<Convocatio
     if (data.cafeteriaTime !== undefined) payload.cafeteriaTime = data.cafeteriaTime;
     if (data.returnTime !== undefined) payload.returnTime = data.returnTime;
     if (data.selectedCriteria !== undefined) payload.selectedCriteria = data.selectedCriteria;
+    if (data.attachedPdf !== undefined) payload.attachedPdf = data.attachedPdf;
 
     await db.update(convocations).set(payload).where(eq(convocations.id, id));
   } catch (error) {

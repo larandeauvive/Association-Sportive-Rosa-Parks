@@ -808,8 +808,8 @@ export const getSessionsList = async (schoolYear?: string): Promise<Session[]> =
 
   if (map.size > 0) {
     const list = Array.from(map.values());
-    list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    return list;
+    const merged = mergeSessionsWithLocal(list, schoolYear);
+    return merged;
   }
 
   return getLocalSessions(schoolYear);
@@ -1271,7 +1271,8 @@ export const getConvocationsList = async (schoolYear?: string): Promise<Convocat
             map.set(c.id, {
               ...c,
               ...cur,
-              studentIds: mergedStudents
+              studentIds: mergedStudents,
+              attachedPdf: cur.attachedPdf || c.attachedPdf
             });
           }
         }

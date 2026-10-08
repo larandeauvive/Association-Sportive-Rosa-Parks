@@ -95,7 +95,8 @@ export const convocations = pgTable('convocations', {
   meetingLocation: text('meeting_location'),
   cafeteriaTime: text('cafeteria_time'),
   returnTime: text('return_time'),
-  selectedCriteria: text('selected_criteria').array()
+  selectedCriteria: text('selected_criteria').array(),
+  attachedPdf: jsonb('attached_pdf')
 });
 
 // Créneaux AS Soir personnels (evening_slots)
