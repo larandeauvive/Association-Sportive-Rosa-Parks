@@ -3358,7 +3358,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             </div>
             
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0 bg-slate-50 overscroll-contain">
-              {!isPublic && (
+              {isTeacherOrAdmin && (
                 <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 mb-6">
                   <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
                     <Printer className="w-4 h-4 text-slate-400" />
@@ -3497,7 +3497,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                             </span>
                           )}
                         </div>
-                        {isSession && !isPublic && (
+                        {isSession && isTeacherOrAdmin && (
                           <div className="text-xs text-slate-600 font-semibold mt-0.5">
                             Pointage d'appel : <strong className="text-emerald-700">{presentCount} présent(s)</strong> sur {enrolled.length} inscrit(s)
                           </div>
@@ -3505,7 +3505,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                       </div>
 
                       {/* Actions rapides enseignant */}
-                      {!isPublic && isSession && (
+                      {isTeacherOrAdmin && isSession && (
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             type="button"
@@ -3553,10 +3553,10 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                                 {survey?.enabled && (
                                   <th className="px-3 py-2 font-bold text-indigo-700 uppercase">Option Sondage</th>
                                 )}
-                                {!isPublic && isSession && (
+                                {isTeacherOrAdmin && isSession && (
                                   <th className="px-3 py-2 font-bold text-slate-500 uppercase text-center w-36">Pointage d'appel</th>
                                 )}
-                                {!isPublic && (
+                                {isTeacherOrAdmin && (
                                   <th className="px-3 py-2 font-bold text-slate-500 uppercase text-right w-24">Action</th>
                                 )}
                               </tr>
@@ -3603,7 +3603,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                                         )}
                                       </td>
                                     )}
-                                    {!isPublic && isSession && (
+                                    {isTeacherOrAdmin && isSession && (
                                       <td className="px-3 py-2 text-center">
                                         <button
                                           type="button"
@@ -3620,7 +3620,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                                         </button>
                                       </td>
                                     )}
-                                    {!isPublic && (
+                                    {isTeacherOrAdmin && (
                                       <td className="px-3 py-2 text-right">
                                         <button
                                           type="button"
@@ -3642,7 +3642,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     )}
 
                     {/* SECTION AJOUT RAPIDE D'ÉLÈVES À LA LISTE (POUR ENSEIGNANTS) */}
-                    {!isPublic && (
+                    {isTeacherOrAdmin && (
                       <div className="bg-white border-2 border-dashed border-indigo-200 rounded-2xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
@@ -3802,7 +3802,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
             </div>
             
             <div className="p-4 border-t border-slate-100 flex justify-between items-center shrink-0 bg-white gap-2">
-              {!isPublic ? (
+              {isTeacherOrAdmin ? (
                 <div className="flex gap-2">
                   {selectedEvent.type === 'session' && (
                     <button
@@ -4892,7 +4892,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
               {/* Footer fixe toujours visible et ancré avec les boutons d'action */}
               <div className="px-5 py-3 sm:px-6 sm:py-3.5 border-t border-slate-100 bg-slate-50/95 flex items-center justify-between gap-3 shrink-0">
                 <div>
-                  {editingEventId && !isPublic && (
+                  {editingEventId && isTeacherOrAdmin && (
                     <button
                       type="button"
                       onClick={() => {
