@@ -30,10 +30,19 @@ export function formatDateFr(dateStr: string | boolean | undefined): string {
 }
 
 export function normalizeGender(val: unknown): 'M' | 'F' | '' {
-  if (!val || typeof val !== 'string') return '';
-  const clean = val.trim().toUpperCase();
-  if (['F', 'FILLE', 'FEMININ', 'FÉMININ', 'FEMME', 'WOMAN', 'GIRL', '2'].includes(clean)) return 'F';
-  if (['M', 'G', 'GARCON', 'GARÇON', 'MASCULIN', 'HOMME', 'MAN', 'BOY', '1'].includes(clean)) return 'M';
+  if (val === undefined || val === null) return '';
+  const str = String(val).trim();
+  if (!str) return '';
+  const clean = str.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  if (['F', 'FILLE', 'FEMININ', 'FEMME', 'WOMAN', 'GIRL', '2', 'MLLE', 'MME', 'MADAME', 'MADEMOISELLE', 'FEMALE'].includes(clean)) {
+    return 'F';
+  }
+  if (['M', 'G', 'GARCON', 'MASCULIN', 'HOMME', 'MAN', 'BOY', '1', 'MR', 'MONSIEUR', 'M.', 'MALE'].includes(clean)) {
+    return 'M';
+  }
+  if (clean.startsWith('FILLE') || clean.startsWith('FEM')) return 'F';
+  if (clean.startsWith('GAR') || clean.startsWith('MASC') || clean.startsWith('HOM')) return 'M';
   if (clean.startsWith('F')) return 'F';
   if (clean.startsWith('M') || clean.startsWith('G')) return 'M';
   return '';

@@ -48,6 +48,7 @@ import {
   restoreBackupToLocalStorage,
   hasLocalStudents
 } from './localStorageDb';
+import { normalizeGender } from './utils';
 
 const API_BASE = '/api';
 
@@ -498,7 +499,7 @@ export const batchUpsertStudentsApi = async (students: Partial<Student>[], schoo
     lastName: s.lastName || '',
     firstName: s.firstName || '',
     classGroup: s.classGroup || '',
-    gender: s.gender || 'M',
+    gender: normalizeGender(s.gender) || '',
     schoolYear: s.schoolYear || schoolYear,
     licenseNumber: s.licenseNumber || '',
     paid: s.paid || 'NON',

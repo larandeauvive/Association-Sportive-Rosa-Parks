@@ -789,7 +789,7 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => {
-                        setNewMember({ isAdult: false, schoolYear: activeYear, gender: 'M', paid: 'NON', parentalAuth: 'NON', imageRights: 'NON', swimmingCertificate: 'NON' });
+                        setNewMember({ isAdult: false, schoolYear: activeYear, gender: '', paid: 'NON', parentalAuth: 'NON', imageRights: 'NON', swimmingCertificate: 'NON' });
                         setIsAddMemberModalOpen(true);
                       }}
                       className="flex justify-center items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 px-3 rounded-lg font-medium transition-colors border border-indigo-200"
@@ -1127,12 +1127,13 @@ export default function App() {
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">Genre / Sexe</label>
                   <select 
-                    value={newMember.gender || 'M'} 
+                    value={newMember.gender || ''} 
                     onChange={e => setNewMember({...newMember, gender: e.target.value})}
                     className="w-full px-3 py-2 border rounded-lg bg-white"
                   >
-                    <option value="M">Garçon (M)</option>
+                    <option value="">-- Non renseigné --</option>
                     <option value="F">Fille (F)</option>
+                    <option value="M">Garçon (M)</option>
                   </select>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import {
   Download, X, FileSpreadsheet, Check, Sparkles, Loader2, Filter, Layers
 } from 'lucide-react';
 import { updateStudent, addStudent } from '../lib/db';
+import { normalizeGender } from '../lib/utils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -235,7 +236,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(7.5);
         doc.setTextColor(67, 56, 202); // indigo-700
-        doc.text('ASSOCIATION SPORTIVE ROSA PARKS  •  FÉDÉRATION NATIONALE UNSS', 6, 7.5);
+        doc.text('ASSOCIATION SPORTIVE ROSA PARKS  •  UNSS', 6, 7.5);
 
         // Titre de classe
         doc.setFontSize(13);
@@ -296,7 +297,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
             String(idx + 1),
             st.lastName?.toUpperCase() || '',
             st.firstName || '',
-            st.gender || (highlightMissing ? 'F/G' : '')
+            normalizeGender(st.gender) || (highlightMissing ? 'F/G' : '')
           ];
 
           if (showBirthDate) {
@@ -774,7 +775,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
                           </span>
                           <span className="text-slate-400 text-[10px]">•</span>
                           <span className="text-[10px] font-bold text-slate-600">
-                            Fédération Nationale UNSS
+                            UNSS
                           </span>
                         </div>
                         <h2 className="text-base sm:text-lg font-black text-slate-900 tracking-tight leading-tight mt-0.5">
@@ -858,7 +859,7 @@ export const ClassListingA4Modal: React.FC<ClassListingA4ModalProps> = ({
 
                                 {/* Sexe */}
                                 <td className={`border border-slate-300 ${density.padding} text-center font-semibold text-slate-600 ${density.text}`}>
-                                  {st.gender || (
+                                  {normalizeGender(st.gender) || (
                                     highlightMissing ? (
                                       <span className="block text-[8px] text-slate-400">F/G</span>
                                     ) : ''

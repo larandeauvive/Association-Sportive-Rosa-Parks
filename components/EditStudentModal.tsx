@@ -34,7 +34,7 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
     setIsSaving(true);
     try {
       await updateStudent(student.id, {
-        gender: formData.gender || 'M',
+        gender: formData.gender || '',
         paid: formData.freeLicense ? 'OUI' : (formData.paid || 'NON'),
         freeLicense: !!formData.freeLicense,
         paymentMethod: formData.freeLicense ? 'Gratuit' : (formData.paymentMethod || ''),
@@ -121,7 +121,7 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
               <div><strong>Prénom :</strong> ${formData.firstName || ''}</div>
               <div><strong>Classe :</strong> ${formData.classGroup || 'Non renseignée'}</div>
               <div><strong>Date de naissance :</strong> ${formData.birthDate || 'Non renseignée'}</div>
-              <div><strong>Genre / Sexe :</strong> ${formData.gender === 'F' ? 'Fille (F)' : 'Garçon (M)'}</div>
+              <div><strong>Genre / Sexe :</strong> ${formData.gender === 'F' ? 'Fille (F)' : formData.gender === 'M' ? 'Garçon (M)' : 'Non renseigné'}</div>
               <div><strong>N° Licence UNSS :</strong> ${formData.licenseNumber || 'En attente d\'attribution'}</div>
             </div>
           </div>
@@ -156,7 +156,7 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
           </div>
 
           <div class="footer">
-            <span>Association Sportive Collège Rosa Parks — Fédération UNSS</span>
+            <span>Association Sportive Collège Rosa Parks — UNSS</span>
             <span>Document récapitulatif officiel</span>
           </div>
         </body>
@@ -216,12 +216,13 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
                   Genre / Sexe
                 </label>
                 <select
-                  value={formData.gender || 'M'}
+                  value={formData.gender || ''}
                   onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="M">Garçon (M)</option>
+                  <option value="">-- Non renseigné --</option>
                   <option value="F">Fille (F)</option>
+                  <option value="M">Garçon (M)</option>
                 </select>
               </div>
 

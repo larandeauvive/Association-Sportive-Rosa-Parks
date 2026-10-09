@@ -1,4 +1,5 @@
 import { Student, Teacher, Session, Convocation, EveningSlot, StaffMember, StaffAttendanceRecord } from '../types';
+import { normalizeGender } from './utils';
 
 const STORAGE_KEYS = {
   STUDENTS: 'as_students_data',
@@ -64,7 +65,7 @@ export function saveLocalStudent(student: Partial<Student>): Student {
     firstName: student.firstName || '',
     classGroup: student.classGroup || '',
     schoolYear: student.schoolYear || '2026-2027',
-    gender: student.gender || 'M',
+    gender: normalizeGender(student.gender) || '',
     licenseNumber: student.licenseNumber || '',
     paid: student.paid || 'NON',
     amount: student.amount || '',
@@ -111,7 +112,7 @@ export function batchSaveLocalStudents(newStudents: Partial<Student>[], schoolYe
       firstName: s.firstName || '',
       classGroup: s.classGroup || '',
       schoolYear: s.schoolYear || schoolYear,
-      gender: s.gender || 'M',
+      gender: normalizeGender(s.gender) || (existingIdx >= 0 ? (normalizeGender(all[existingIdx].gender) || '') : ''),
       licenseNumber: s.licenseNumber || (existingIdx >= 0 ? all[existingIdx].licenseNumber : ''),
       paid: s.paid || (existingIdx >= 0 ? all[existingIdx].paid : 'NON'),
       amount: s.amount || '',

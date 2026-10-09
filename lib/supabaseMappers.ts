@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { normalizeGender } from './utils';
 import { 
   Student, PublicStudent, Teacher, Convocation, 
   Session, EveningSlot, StaffMember, StaffAttendanceRecord 
@@ -11,7 +12,7 @@ export function rowToStudent(row: any): Student {
     lastName: row.last_name ?? row.lastName ?? '',
     firstName: row.first_name ?? row.firstName ?? '',
     classGroup: row.class_group ?? row.classGroup ?? '',
-    gender: row.gender ?? 'M',
+    gender: row.gender ? normalizeGender(row.gender) : '',
     schoolYear: row.school_year ?? row.schoolYear ?? '',
     licenseNumber: row.license_number ?? row.licenseNumber ?? '',
     paid: row.paid ?? 'NON',

@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, History, ArrowUpDown, Clock,
   Repeat, CalendarDays, Timer, Sparkles, Info, Lock, HelpCircle,
   FileText, FileUp, Download, Eye, X, Loader2,
-  Moon, Zap, Layers, Printer, Share2, Check, Sliders, ClipboardCheck
+  Moon, Zap, Layers, Printer, Share2, Check, Sliders, ClipboardCheck, Activity
 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { 
@@ -26,9 +26,10 @@ interface SessionManagerProps {
   activeYear: string;
   defaultCategory?: 'all' | 'as_soir' | 'mercredi';
   initialTimeFilter?: 'upcoming' | 'past' | 'all';
+  isTeacherView?: boolean;
 }
 
-export function SessionManager({ students, activeYear, defaultCategory = 'all', initialTimeFilter = 'upcoming' }: SessionManagerProps) {
+export function SessionManager({ students, activeYear, defaultCategory = 'all', initialTimeFilter = 'upcoming', isTeacherView = false }: SessionManagerProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   
@@ -60,6 +61,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   const [attendanceSearch, setAttendanceSearch] = useState('');
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState<'all' | 'present' | 'absent'>('all');
   const [editManualStudentSearch, setEditManualStudentSearch] = useState('');
+
+  // Filtres au début demandés : Créneau hebdomadaire & Choix de l'intitulé
+  const [weeklySlotFilter, setWeeklySlotFilter] = useState<string>('all');
+  const [titleFilter, setTitleFilter] = useState<string>('all');
+
+  // Navigation mobile optimisée smartphone : liste des séances vs feuille d'appel
+  const [mobileViewTab, setMobileViewTab] = useState<'list' | 'attendance'>('list');
+  // Navigation interne feuille d'appel sur smartphone : appel des inscrits vs inscrire un élève
+  const [sheetMobileTab, setSheetMobileTab] = useState<'enrolled' | 'add'>('enrolled');
 
   const [isAsSoirHistoryOpen, setIsAsSoirHistoryOpen] = useState(false);
   const [isMercrediHistoryOpen, setIsMercrediHistoryOpen] = useState(false);
@@ -1256,6 +1266,42 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       });
   }, [currentTargetSession, students, attendanceStatusFilter, attendanceSearch]);
 
+  // Liste unique des intitulés de séances pour le sélecteur
+  const uniqueTitles = useMemo(() => {
+    const set = new Set<string>();
+    sessions.forEach(s => {
+      if (s.name && s.name.trim()) set.add(s.name.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'fr'));
+  }, [sessions]);
+
+  // Liste des créneaux hebdomadaires disponibles
+  const availableWeeklySlots = useMemo(() => {
+    const slotsMap = new Map<string, { id: string; label: string }>();
+    slotsMap.set('as_soir', { id: 'as_soir', label: '🌙 AS du Soir (Mardi & Jeudi 17h-18h)' });
+    slotsMap.set('mardi', { id: 'mardi', label: 'Mardi (Soir 17h - 18h)' });
+    slotsMap.set('jeudi', { id: 'jeudi', label: 'Jeudi (Soir 17h - 18h)' });
+    slotsMap.set('mercredi', { id: 'mercredi', label: '⚡ Mercredi après-midi' });
+
+    sessions.forEach(s => {
+      const dayName = getSessionDayName(s.date);
+      if (dayName && s.time) {
+        const key = `${dayName.toLowerCase()}_${s.time.replace(':', 'h')}`;
+        const label = `${dayName} (${s.time}${s.endTime ? ` - ${s.endTime}` : ''})`;
+        if (!slotsMap.has(key)) {
+          slotsMap.set(key, { id: key, label });
+        }
+      }
+    });
+
+    return Array.from(slotsMap.values());
+  }, [sessions]);
+
+  // Séance d'aujourd'hui
+  const todaySession = useMemo(() => {
+    return sessions.find(s => s.date === todayStr);
+  }, [sessions, todayStr]);
+
   // Partitionnement chronologique et par catégorie :
   // Colonne 1 : AS du Soir (Mardi ou Jeudi, 17h00 - 18h00, récurrents)
   // Colonne 2 : Mercredi (Créneaux ponctuels, compétitions, tournois, sorties)
@@ -1265,13 +1311,47 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     totalAsSoir, totalMercredi 
   } = useMemo(() => {
     const q = sessionSearch.trim().toLowerCase();
-    const filtered = q
-      ? sessions.filter(s => 
-          (s.name || '').toLowerCase().includes(q) ||
-          (s.date || '').toLowerCase().includes(q) ||
-          (s.meetingLocation || '').toLowerCase().includes(q)
-        )
-      : sessions;
+    let filtered = sessions;
+
+    // 1. Filtre par choix de l'intitulé
+    if (titleFilter && titleFilter !== 'all') {
+      filtered = filtered.filter(s => (s.name || '').trim().toLowerCase() === titleFilter.trim().toLowerCase());
+    }
+
+    // 2. Filtre par créneau hebdomadaire
+    if (weeklySlotFilter && weeklySlotFilter !== 'all') {
+      filtered = filtered.filter(s => {
+        const cat = getSessionCategory(s);
+        const dayName = getSessionDayName(s.date).toLowerCase();
+        if (weeklySlotFilter === 'as_soir') {
+          return cat === 'as_soir';
+        }
+        if (weeklySlotFilter === 'mardi') {
+          return dayName === 'mardi';
+        }
+        if (weeklySlotFilter === 'jeudi') {
+          return dayName === 'jeudi';
+        }
+        if (weeklySlotFilter === 'mercredi') {
+          return dayName === 'mercredi';
+        }
+        if (s.time) {
+          const key = `${dayName}_${s.time.replace(':', 'h')}`;
+          if (key === weeklySlotFilter) return true;
+        }
+        return false;
+      });
+    }
+
+    // 3. Recherche textuelle
+    if (q) {
+      filtered = filtered.filter(s => 
+        (s.name || '').toLowerCase().includes(q) ||
+        (s.date || '').toLowerCase().includes(q) ||
+        (s.location || '').toLowerCase().includes(q) ||
+        (s.meetingLocation || '').toLowerCase().includes(q)
+      );
+    }
 
     // Ordre chronologique strict (date puis heure)
     const sorted = [...filtered].sort((a, b) => {
@@ -1319,7 +1399,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       totalAsSoir: soirUpImmediate.length + soirUpLater.length + soirPast.length,
       totalMercredi: merUp.length + merPast.length
     };
-  }, [sessions, sessionSearch, todayStr, asSoirHorizonStr, showLaterAsSoir]);
+  }, [sessions, sessionSearch, todayStr, asSoirHorizonStr, showLaterAsSoir, titleFilter, weeklySlotFilter]);
 
   const displayedAsSoirPast = useMemo(() => {
     if (pastSortOrder === 'desc') return [...asSoirPast].reverse();
@@ -1352,7 +1432,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
     return (
       <div 
         key={s.id}
-        onClick={() => { setActiveSessionId(s.id); setIsCreating(false); }}
+        onClick={() => { setActiveSessionId(s.id); setIsCreating(false); setMobileViewTab('attendance'); }}
         className={`p-3 rounded-xl cursor-pointer transition-all border ${
           isSelected 
             ? isSoir
@@ -1478,14 +1558,135 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   };
 
   return (
-    <div className="flex flex-col xl:flex-row gap-6 min-h-[600px] h-full">
-      {/* Colonne(s) de gauche : Créneaux récurrents AS du Soir et Créneaux ponctuels Mercredi */}
-      <div className={`flex flex-col gap-4 shrink-0 transition-all ${
+    <div className="flex flex-col xl:flex-row gap-4 sm:gap-6 min-h-[600px] h-full">
+      {/* Colonne(s) de gauche : Filtres, Créneaux récurrents AS du Soir et Créneaux ponctuels Mercredi */}
+      <div className={`flex-col gap-3.5 sm:gap-4 shrink-0 transition-all ${
+        mobileViewTab === 'attendance' && activeSession && !isCreating ? 'hidden xl:flex' : 'flex'
+      } ${
         activeCategory === 'all' ? 'w-full xl:w-[680px]' : 'w-full xl:w-96'
       }`}>
-        {/* Bandeau d'actions et Sélecteur de vue */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-3">
-          <div className="flex items-center gap-2">
+        {/* Bandeau de filtres au début : Créneau hebdomadaire & Choix de l'intitulé */}
+        <div className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+          {/* Les 2 filtres prioritaires demandés par l'utilisateur */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {/* Filtre 1 : Créneau hebdomadaire */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Créneau hebdomadaire</span>
+              </label>
+              <select
+                value={weeklySlotFilter}
+                onChange={e => setWeeklySlotFilter(e.target.value)}
+                className="w-full text-xs font-semibold bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer transition-colors"
+              >
+                <option value="all">🗓️ Tous les créneaux</option>
+                <option value="as_soir">🌙 AS du Soir (Mardi & Jeudi 17h-18h)</option>
+                <option value="mardi">Mardi (Soir 17h - 18h)</option>
+                <option value="jeudi">Jeudi (Soir 17h - 18h)</option>
+                <option value="mercredi">⚡ Mercredi après-midi</option>
+                {availableWeeklySlots.filter(s => !['as_soir', 'mardi', 'jeudi', 'mercredi'].includes(s.id)).map(s => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtre 2 : Choix de l'intitulé */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Activity className="w-3.5 h-3.5 text-purple-600" />
+                <span>Choix de l'intitulé</span>
+              </label>
+              <select
+                value={titleFilter}
+                onChange={e => setTitleFilter(e.target.value)}
+                className="w-full text-xs font-semibold bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer transition-colors"
+              >
+                <option value="all">🏷️ Tous les intitulés ({uniqueTitles.length})</option>
+                {uniqueTitles.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {(weeklySlotFilter !== 'all' || titleFilter !== 'all') && (
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+              <span className="text-[11px] text-indigo-700 font-semibold truncate">
+                Filtre : {weeklySlotFilter !== 'all' ? (availableWeeklySlots.find(s => s.id === weeklySlotFilter)?.label || weeklySlotFilter) : ''} {titleFilter !== 'all' ? `• ${titleFilter}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => { setWeeklySlotFilter('all'); setTitleFilter('all'); }}
+                className="text-[11px] text-slate-500 hover:text-slate-900 underline font-semibold cursor-pointer shrink-0 ml-2"
+              >
+                Réinitialiser
+              </button>
+            </div>
+          )}
+
+          {/* Séance du jour en accès direct optimisé smartphone */}
+          {todaySession && (
+            <div 
+              onClick={() => {
+                setActiveSessionId(todaySession.id);
+                setIsCreating(false);
+                setMobileViewTab('attendance');
+              }}
+              className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-500 text-white p-3 rounded-xl shadow-md flex items-center justify-between gap-2.5 cursor-pointer active:scale-98 transition-transform border border-amber-400/50"
+              title="Cliquer pour faire l'appel de la séance d'aujourd'hui"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] uppercase font-black tracking-wider text-amber-100 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                  <span>Séance d'aujourd'hui</span>
+                </div>
+                <div className="font-black text-sm truncate">{todaySession.name}</div>
+                <div className="text-xs text-amber-100 font-medium truncate">
+                  {getSessionDayName(todaySession.date)} • {todaySession.time}{todaySession.endTime ? ` - ${todaySession.endTime}` : ''}
+                  {todaySession.location ? ` • 📍 ${todaySession.location}` : ''}
+                </div>
+              </div>
+              <div className="shrink-0 bg-white text-amber-900 font-black text-xs px-2.5 py-1.5 rounded-lg shadow-sm flex items-center gap-1">
+                <span>Appel</span>
+                <span>→</span>
+              </div>
+            </div>
+          )}
+
+          {/* Sélecteur mobile entre Séances et Feuille d'appel */}
+          {activeSession && (
+            <div className="xl:hidden flex bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setMobileViewTab('list')}
+                className={`flex-1 py-1.5 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  mobileViewTab === 'list'
+                    ? 'bg-white text-indigo-950 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Séances ({asSoirUpcoming.length + mercrediUpcoming.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileViewTab('attendance')}
+                className={`flex-1 py-1.5 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  mobileViewTab === 'attendance'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-emerald-800 hover:bg-emerald-50'
+                }`}
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                <span className="truncate">
+                  Appel ({(activeSession.presentStudentIds || []).length}/{(activeSession.enrolledStudentIds || []).length})
+                </span>
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
             <button 
               onClick={() => openCreateForm(activeCategory === 'mercredi' ? 'mercredi' : 'as_soir')}
               className="flex-1 flex items-center justify-center gap-2 bg-slate-900 text-white py-2 px-3 sm:px-4 rounded-lg font-bold hover:bg-slate-800 transition shadow-sm cursor-pointer text-xs sm:text-sm"
@@ -1890,7 +2091,9 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       </div>
 
       {/* Right Content */}
-      <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
+      <div className={`flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex-col overflow-hidden ${
+        mobileViewTab === 'list' && !isCreating ? 'hidden xl:flex' : 'flex'
+      }`}>
         {isCreating ? (
           <div className="flex flex-col flex-1 h-full min-h-0 overflow-hidden">
             <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
@@ -3531,7 +3734,23 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 </span>
               </div>
             )}
-            <div className="p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
+            {/* Barre mobile avec bouton retour à la liste */}
+            <div className="xl:hidden p-3 bg-gradient-to-r from-indigo-950 to-indigo-900 text-white flex items-center justify-between shrink-0 shadow-xs">
+              <button
+                type="button"
+                onClick={() => setMobileViewTab('list')}
+                className="flex items-center gap-1.5 text-xs font-bold text-white bg-white/15 hover:bg-white/25 active:scale-95 px-3 py-1.5 rounded-xl border border-white/20 transition-all cursor-pointer shadow-2xs"
+              >
+                <span>← Revenir aux séances</span>
+              </button>
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <span className="bg-emerald-500 text-white px-2.5 py-0.5 rounded-full text-xs font-black shadow-xs">
+                  {(activeSession.presentStudentIds || []).length} / {(activeSession.enrolledStudentIds || []).length} présents
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50 flex justify-between items-start">
               <div>
                 <div className="flex items-center gap-2 flex-wrap mb-1.5">
                   <h2 className="text-2xl font-black text-slate-900">{activeSession.name}</h2>
@@ -3952,15 +4171,43 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 </div>
               )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 overflow-hidden">
+              {/* Sélecteur mobile entre "Appel des inscrits" et "+ Inscrire un élève" */}
+              <div className="lg:hidden flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold mb-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSheetMobileTab('enrolled')}
+                  className={`flex-1 py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    sheetMobileTab === 'enrolled'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <ClipboardCheck className="w-3.5 h-3.5" />
+                  <span>Inscrits ({(activeSession.enrolledStudentIds || []).length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetMobileTab('add')}
+                  className={`flex-1 py-2 px-2.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    sheetMobileTab === 'add'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>+ Inscrire un élève ({filteredStudents.length})</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 overflow-hidden">
                 
-                {/* List of enrolled students with attendance controls */}
-                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                {/* Colonne 1 : Appel des élèves inscrits avec boutons tactiles ergonomiques */}
+                <div className={`${sheetMobileTab === 'enrolled' ? 'flex' : 'hidden lg:flex'} flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs`}>
                   <div className="bg-slate-100 p-3 border-b border-slate-200 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-800 text-sm">Pointage d'appel</span>
-                        <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border border-slate-200 text-indigo-700">
+                        <span className="bg-white px-2 py-0.5 rounded text-xs font-bold border border-slate-200 text-emerald-700">
                           {(activeSession.presentStudentIds || []).length} / {(activeSession.enrolledStudentIds || []).length} présents
                         </span>
                       </div>
@@ -3969,7 +4216,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                           type="button"
                           onClick={markAllPresent}
                           disabled={!activeSession.enrolledStudentIds || activeSession.enrolledStudentIds.length === 0}
-                          className="px-2 py-1 text-[11px] font-bold bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          className="px-2.5 py-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
                           title="Pointer tous les élèves inscrits comme présents"
                         >
                           Tout pointer
@@ -3978,7 +4225,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                           type="button"
                           onClick={markAllAbsent}
                           disabled={!activeSession.presentStudentIds || activeSession.presentStudentIds.length === 0}
-                          className="px-2 py-1 text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          className="px-2 py-1 text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer border border-rose-200"
                           title="Réinitialiser le pointage (marquer tous absents)"
                         >
                           Réinitialiser
@@ -4031,37 +4278,31 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                     </div>
                   </div>
 
-                  <div className="overflow-y-auto flex-1 p-2 space-y-1 min-h-[300px]">
+                  <div className="overflow-y-auto flex-1 p-2 space-y-1.5 min-h-[300px]">
                     {activeEnrolledStudents.map(s => {
                       const isPresent = (activeSession.presentStudentIds || []).includes(s.id);
                       return (
-                        <div key={`enrolled_${s.id}`} className={`flex items-center justify-between p-2 rounded-lg border transition-all ${
-                          isPresent ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs' : 'bg-white border-slate-200 hover:border-slate-300'
-                        }`}>
-                          <div className="flex items-center gap-3 min-w-0">
-                            <button 
-                              type="button"
-                              onClick={() => toggleAttendance(s.id)}
-                              className={`p-1 rounded-full transition-transform active:scale-90 cursor-pointer ${
-                                isPresent ? 'text-emerald-600' : 'text-slate-300 hover:text-slate-500'
-                              }`}
-                              title={isPresent ? "Cliquer pour marquer absent" : "Cliquer pour marquer présent"}
-                            >
-                              {isPresent ? <CheckCircle2 className="w-6 h-6" /> : <Circle className="w-6 h-6" />}
-                            </button>
+                        <div 
+                          key={`enrolled_${s.id}`} 
+                          onClick={() => toggleAttendance(s.id)}
+                          className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all cursor-pointer ${
+                            isPresent ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs' : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
                             <div className="min-w-0">
-                              <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                              <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5 flex-wrap">
                                 <span className="truncate">{s.lastName} {s.firstName}</span>
                                 {isPresent && (
                                   <span className="bg-emerald-200 text-emerald-900 text-[10px] font-black px-1.5 py-0.2 rounded uppercase">
                                     Présent ✓
                                   </span>
                                 )}
-                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none">AP🚫</span>}
-                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-bold leading-none">€🚫</span>}
+                                {String(s.parentalAuth).toUpperCase() !== 'OUI' && <span title="Autorisation parentale manquante" className="text-xs text-rose-500 leading-none font-bold">AP🚫</span>}
+                                {String(s.paid).toUpperCase() !== 'OUI' && <span title="Cotisation non payée" className="text-xs text-rose-500 font-black leading-none">€🚫</span>}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-slate-500">{s.classGroup || 'Sans classe'}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-xs text-slate-500 font-semibold">{s.classGroup || 'Sans classe'}</span>
                                 {activeSession.survey?.enabled && activeSession.surveyResponses?.[s.id] && (
                                   <span className="inline-flex items-center gap-1 bg-sky-100 text-sky-900 border border-sky-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate max-w-[150px]" title={`Choix sondage: ${Array.isArray(activeSession.surveyResponses[s.id]) ? activeSession.surveyResponses[s.id].join(', ') : activeSession.surveyResponses[s.id]}`}>
                                     <span>🗳️</span>
@@ -4071,14 +4312,46 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                               </div>
                             </div>
                           </div>
-                          <button 
-                            type="button"
-                            onClick={() => toggleEnrollment(s.id)}
-                            className="text-xs text-slate-400 hover:text-red-600 hover:bg-red-50 rounded px-2 py-1 transition-colors shrink-0 cursor-pointer"
-                            title="Désinscrire de la séance"
-                          >
-                            Retirer
-                          </button>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Bouton de pointage tactile optimisé smartphone (taille au moins 44px) */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleAttendance(s.id);
+                              }}
+                              className={`h-11 px-3 sm:px-4 rounded-xl font-black text-xs sm:text-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-xs ${
+                                isPresent
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                              }`}
+                            >
+                              {isPresent ? (
+                                <>
+                                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                                  <span>Présent ✓</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Circle className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400" />
+                                  <span>Absent</span>
+                                </>
+                              )}
+                            </button>
+
+                            <button 
+                              type="button" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleEnrollment(s.id);
+                              }}
+                              className="text-xs text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg p-2 transition-colors shrink-0 cursor-pointer"
+                              title="Désinscrire de la séance"
+                            >
+                              ✕
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -4087,7 +4360,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                         <Users className="w-8 h-8 text-slate-300 mx-auto" />
                         <p className="text-sm font-semibold text-slate-600">Aucun élève inscrit sur cette séance</p>
                         <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                          Utilisez la liste de droite pour inscrire des élèves ou les pointer directement présents en 1 clic.
+                          Utilisez l'onglet « Inscrire un élève » pour ajouter des participants ou les pointer directement présents en 1 clic.
                         </p>
                       </div>
                     )}
@@ -4099,8 +4372,8 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                   </div>
                 </div>
 
-                {/* List of non-enrolled students (Database) */}
-                <div className="flex flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs">
+                {/* Colonne 2 : Inscrire un autre élève (Annuaire de l'établissement) */}
+                <div className={`${sheetMobileTab === 'add' ? 'flex' : 'hidden lg:flex'} flex-col overflow-hidden border border-slate-200 rounded-xl bg-white shadow-2xs`}>
                   <div className="bg-slate-50 p-3 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <span className="font-bold text-slate-700 text-sm">
                       Tous les élèves ({filteredStudents.length})

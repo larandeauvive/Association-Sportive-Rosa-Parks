@@ -80,19 +80,26 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
         
         // Auto-detect columns
         const newMapping: Record<string, string> = {};
-        const lowerHeaders = headers.map(h => h.toLowerCase());
         
         const findHeader = (keywords: string[]) => {
-            const index = lowerHeaders.findIndex(h => keywords.some(k => h.includes(k)));
-            return index >= 0 ? headers[index] : '';
+          const index = headers.findIndex(h => {
+            const cleanH = h.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            return keywords.some(k => {
+              const cleanK = k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+              return cleanH === cleanK || cleanH.includes(cleanK) || cleanK.includes(cleanH);
+            });
+          });
+          return index >= 0 ? headers[index] : '';
         };
+
+        const genderKeywords = ['sexe', 'genre', 'sex', 'f/g', 'm/f', 'g/f', 'civilite', 'civilité'];
 
         if (mode === 'pronote') {
             newMapping.lastName = findHeader(['nom']);
             newMapping.firstName = findHeader(['prénom', 'prenom']);
             newMapping.classGroup = findHeader(['classe', 'rattachement']);
             newMapping.birthDate = findHeader(['né(e)', 'naissance', 'date']);
-            newMapping.gender = findHeader(['sexe', 'genre']);
+            newMapping.gender = findHeader(genderKeywords);
             newMapping.paid = findHeader(['payé', 'paiement', 'regle', 'cotisation']);
             newMapping.amount = findHeader(['montant', 'prix']);
             newMapping.paymentMethod = findHeader(['mode', 'espece', 'cheque', 'moyen']);
@@ -107,6 +114,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
             newMapping.firstName = findHeader(['prénom', 'prenom']);
             newMapping.birthDate = findHeader(['né(e)', 'naissance', 'date']);
             newMapping.licenseNumber = findHeader(['licence', 'numéro']);
+            newMapping.gender = findHeader(genderKeywords);
         }
         setColumnMapping(newMapping);
         setStep(2);
@@ -183,7 +191,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
           imageRights: imageRights ? (row[imageRights] || '') : (existingStudent?.imageRights || ''),
           tshirt: tshirt ? (row[tshirt] || '') : (existingStudent?.tshirt || ''),
           size: size ? (row[size] || '') : (existingStudent?.size || ''),
-          gender: gender ? (normalizeGender(row[gender]) || existingStudent?.gender || '') : (existingStudent?.gender || ''),
+          gender: (gender && row[gender] !== undefined && normalizeGender(row[gender])) 
+            ? normalizeGender(row[gender]) 
+            : (existingStudent?.gender ? normalizeGender(existingStudent.gender) : ''),
           swimmingCertificate: swimmingCertificate ? (row[swimmingCertificate] || 'NON') : (existingStudent?.swimmingCertificate || 'NON')
         },
         isDuplicate: !!existingStudent,
@@ -205,7 +215,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
 
   const processUnss = () => {
     setIsProcessing(true);
-    const { lastName, firstName, birthDate, licenseNumber } = columnMapping;
+    const { lastName, firstName, birthDate, licenseNumber, gender } = columnMapping;
 
     if (!lastName || !firstName || !birthDate || !licenseNumber) {
         alert("Veuillez mapper tous les champs requis.");
@@ -213,9 +223,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
         return;
     }
 
-    const updates: { id: string, licenseNumber: string, originalStudent: Student }[] = [];
-    const newConflicts: { id: string, licenseNumber: string, originalStudent: Student, unssBirthDate: string, selected: boolean }[] = [];
-    const newUnmatched: { unssLastName: string, unssFirstName: string, unssBirthDate: string, licenseNumber: string, selectedStudentId: string | null }[] = [];
+    const updates: { id: string, licenseNumber: string, originalStudent: Student, gender?: string }[] = [];
+    const newConflicts: { id: string, licenseNumber: string, originalStudent: Student, unssBirthDate: string, selected: boolean, gender?: string }[] = [];
+    const newUnmatched: { unssLastName: string, unssFirstName: string, unssBirthDate: string, licenseNumber: string, selectedStudentId: string | null, unssGender?: string }[] = [];
     const alreadyLicensedIncomp: Student[] = [];
 
     parsedData.forEach(row => {
@@ -223,6 +233,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
       const origLastName = (row[lastName] || '').trim();
       const origFirstName = (row[firstName] || '').trim();
       const dob = (row[birthDate] || '').trim();
+      const rowGender = (gender && row[gender] !== undefined && normalizeGender(row[gender])) ? normalizeGender(row[gender]) : '';
 
       if (!license || !dob || !origLastName || !origFirstName) return;
 
@@ -259,7 +270,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
            updates.push({
              id: exactNameMatch.id,
              licenseNumber: license,
-             originalStudent: exactNameMatch
+             originalStudent: exactNameMatch,
+             gender: rowGender || undefined
            });
          } else {
            newConflicts.push({
@@ -267,7 +279,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
              licenseNumber: license,
              originalStudent: exactNameMatch,
              unssBirthDate: dob,
-             selected: false
+             selected: false,
+             gender: rowGender || undefined
            });
          }
          return; 
@@ -295,7 +308,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
            updates.push({
              id: bestMatch.id,
              licenseNumber: license,
-             originalStudent: bestMatch
+             originalStudent: bestMatch,
+             gender: rowGender || undefined
            });
            return;
         }
@@ -306,7 +320,8 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
         unssFirstName: origFirstName,
         unssBirthDate: dob,
         licenseNumber: license,
-        selectedStudentId: null
+        selectedStudentId: null,
+        unssGender: rowGender || undefined
       });
     });
 
@@ -586,14 +601,16 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
         .filter(u => u.selectedStudentId !== null)
         .map(u => ({
           id: u.selectedStudentId!,
-          licenseNumber: u.licenseNumber
+          licenseNumber: u.licenseNumber,
+          gender: u.unssGender
         }));
 
       const allUpdates = [
-        ...previewUpdateData.map(u => ({ id: u.id, licenseNumber: u.licenseNumber })),
+        ...previewUpdateData.map(u => ({ id: u.id, licenseNumber: u.licenseNumber, gender: u.gender })),
         ...conflictsData.filter(c => c.selected).map(c => ({
           id: c.id,
-          licenseNumber: c.licenseNumber
+          licenseNumber: c.licenseNumber,
+          gender: c.gender
         })),
         ...manualMatches
       ];
@@ -608,7 +625,10 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
       for (let i = 0; i < allUpdates.length; i += 20) {
         const batch = allUpdates.slice(i, i + 20);
         await Promise.all(
-          batch.map(u => updateStudent(u.id, { licenseNumber: u.licenseNumber }))
+          batch.map(u => updateStudent(u.id, { 
+            licenseNumber: u.licenseNumber,
+            ...(u.gender ? { gender: u.gender } : {})
+          }))
         );
       }
       
@@ -794,6 +814,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
                         <th className="px-4 py-3">Nom</th>
                         <th className="px-4 py-3">Prénom</th>
                         <th className="px-4 py-3">Classe</th>
+                        <th className="px-4 py-3">Sexe</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -824,6 +845,15 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({ isOpen, onClose, act
                           <td className="px-4 py-2 font-medium text-slate-900">{r.student.lastName}</td>
                           <td className="px-4 py-2">{r.student.firstName}</td>
                           <td className="px-4 py-2 font-medium">{r.student.classGroup}</td>
+                          <td className="px-4 py-2">
+                             {r.student.gender === 'F' ? (
+                               <span className="text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded text-xs font-semibold">Fille (F)</span>
+                             ) : r.student.gender === 'M' ? (
+                               <span className="text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded text-xs font-semibold">Garçon (M)</span>
+                             ) : (
+                               <span className="text-slate-400 text-xs italic">Non défini</span>
+                             )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
