@@ -5,10 +5,14 @@ import {
   X, Trophy, Sparkles, Check, ArrowLeft,
   Calendar, Clock, MapPin, UserCheck, Loader2,
   Timer, Lock, Download, FileText, HelpCircle,
-  Share2
+  Share2, Hourglass, BookmarkPlus, ChevronRight
 } from 'lucide-react';
-import { getSession, getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
-import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
+import { 
+  getSession, getPublicDirectory, enrollInSession, 
+  enrollTeamInSession, addStudent, joinSessionWaitlistApi, 
+  leaveSessionWaitlistApi 
+} from '../lib/db';
+import { getSessionRegistrationStatus, formatRegistrationRule, getSessionCategory } from '../lib/sessionUtils';
 
 interface PublicEnrollmentProps {
   sessionId: string;
@@ -23,6 +27,9 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const [error, setError] = useState('');
   const [enrollingId, setEnrollingId] = useState<string | null>(null);
   const [lastEnrolledStudent, setLastEnrolledStudent] = useState<PublicStudent | null>(null);
+  const [lastWaitlistedStudent, setLastWaitlistedStudent] = useState<PublicStudent | null>(null);
+  const [waitlistSearchTerm, setWaitlistSearchTerm] = useState('');
+  const [isJoiningWaitlist, setIsJoiningWaitlist] = useState(false);
 
   // Pour inscription en équipe
   const [teamName, setTeamName] = useState('');
@@ -191,6 +198,62 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
       alert(err?.message || "Une erreur est survenue lors de l'inscription.");
     } finally {
       setEnrollingId(null);
+    }
+  };
+
+  const handleJoinWaitlist = async (student: PublicStudent) => {
+    if (!session) return;
+    const currentWaitlist = new Set(session.waitlistStudentIds || []);
+    if (currentWaitlist.has(student.id)) {
+      alert(`${student.firstName} ${student.lastName} est déjà sur la liste d'attente de cette séance.`);
+      return;
+    }
+    const currentEnrolled = new Set(session.enrolledStudentIds || []);
+    if (currentEnrolled.has(student.id)) {
+      alert(`${student.firstName} ${student.lastName} est déjà inscrit(e) à cette séance.`);
+      return;
+    }
+
+    const missing = getStudentMissingRequirements(student);
+    if (missing.length > 0) {
+      alert(`Inscription sur liste d'attente impossible pour ${student.firstName} ${student.lastName} :\nCritères obligatoires manquants : ${missing.join(', ')}.\nVeuillez régulariser votre dossier auprès de votre enseignant d'EPS.`);
+      return;
+    }
+
+    setEnrollingId(student.id);
+    setIsJoiningWaitlist(true);
+    try {
+      await joinSessionWaitlistApi(session.id, student.id);
+      const updatedWaitlist = Array.from(new Set([...(session.waitlistStudentIds || []), student.id]));
+      setSession({
+        ...session,
+        waitlistStudentIds: updatedWaitlist
+      });
+      setLastWaitlistedStudent(student);
+      setWaitlistSearchTerm('');
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.message || "Une erreur est survenue lors de l'inscription sur liste d'attente.");
+    } finally {
+      setEnrollingId(null);
+      setIsJoiningWaitlist(false);
+    }
+  };
+
+  const handleLeaveWaitlist = async (studentId: string) => {
+    if (!session) return;
+    try {
+      await leaveSessionWaitlistApi(session.id, studentId);
+      const updatedWaitlist = (session.waitlistStudentIds || []).filter(id => id !== studentId);
+      setSession({
+        ...session,
+        waitlistStudentIds: updatedWaitlist
+      });
+      if (lastWaitlistedStudent?.id === studentId) {
+        setLastWaitlistedStudent(null);
+      }
+    } catch (err: any) {
+      console.error(err);
     }
   };
 
@@ -537,15 +600,162 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                 </div>
               </div>
             ) : isFull ? (
-              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-3">
-                <p className="font-black text-slate-800 text-base">La séance est complète</p>
-                <p className="text-xs text-slate-500">Toutes les places sont actuellement réservées.</p>
-                <button 
-                  onClick={handleGoBack}
-                  className="px-5 py-2.5 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
-                >
-                  ← Retour au calendrier
-                </button>
+              <div className="p-4 sm:p-6 bg-purple-50/90 rounded-2xl border-2 border-purple-300 space-y-4 shadow-xs animate-in fade-in">
+                {/* En-tête Séance Complète + Liste d'attente */}
+                <div className="flex items-start gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 border border-purple-200 shadow-2xs">
+                    <Hourglass className="w-6 h-6 text-purple-600 animate-pulse" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500 text-white shadow-xs">
+                        Complet ({enrolledCount}/{session.maxParticipants} places)
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-200 text-purple-900 border border-purple-300">
+                        Liste d'attente active
+                      </span>
+                    </div>
+                    <h3 className="font-black text-purple-950 text-base sm:text-lg mt-1">
+                      Cette séance est complète, rejoins la liste d'attente !
+                    </h3>
+                    <p className="text-xs text-purple-800 font-medium leading-relaxed mt-0.5">
+                      En cas de désistement ou si le professeur d'EPS ouvre une séance supplémentaire sur un autre jour, les élèves en liste d'attente seront prioritaires.
+                    </p>
+                  </div>
+                </div>
+
+                {/* État de la liste d'attente actuelle */}
+                <div className="bg-white/90 p-3 sm:p-3.5 rounded-xl border border-purple-200 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-purple-600 shrink-0" />
+                    <span className="font-bold text-slate-800">
+                      {(session.waitlistStudentIds || []).length} élève(s) en attente
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-purple-700 font-semibold bg-purple-100 px-2.5 py-0.5 rounded-full">
+                    Priorité par ordre d'arrivée
+                  </span>
+                </div>
+
+                {/* Notification de succès d'inscription sur liste d'attente */}
+                {lastWaitlistedStudent && (
+                  <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-3 sm:p-4 flex items-start gap-3 animate-in fade-in zoom-in-95">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 text-xs">
+                      <strong className="text-emerald-950 block font-bold text-sm">
+                        {lastWaitlistedStudent.firstName} est bien inscrit(e) sur la liste d'attente !
+                      </strong>
+                      <span className="text-emerald-800">
+                        Position n°{(session.waitlistStudentIds || []).indexOf(lastWaitlistedStudent.id) + 1}. Tu seras informé(e) en cas de place disponible ou de création d'une nouvelle séance.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Champ de recherche pour rejoindre la liste d'attente */}
+                <div className="space-y-2 bg-white p-3.5 sm:p-4 rounded-xl border border-purple-200">
+                  <label className="text-xs font-black text-slate-800 uppercase tracking-wide block">
+                    Rechercher ton nom pour t'inscrire sur la liste d'attente :
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Tape ton nom, prénom ou ta classe..."
+                      value={waitlistSearchTerm}
+                      onChange={e => setWaitlistSearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-purple-500 rounded-xl text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 shadow-2xs"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+
+                  {/* Résultats de recherche pour liste d'attente */}
+                  {waitlistSearchTerm.trim().length >= 2 && (
+                    <div className="space-y-1.5 pt-2 max-h-56 overflow-y-auto divide-y divide-slate-100">
+                      {students
+                        .filter(s => {
+                          const q = waitlistSearchTerm.toLowerCase();
+                          return (
+                            (s.lastName || '').toLowerCase().includes(q) ||
+                            (s.firstName || '').toLowerCase().includes(q) ||
+                            (s.classGroup || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .slice(0, 8)
+                        .map(st => {
+                          const isAlreadyEnrolled = (session.enrolledStudentIds || []).includes(st.id);
+                          const isAlreadyWaitlisted = (session.waitlistStudentIds || []).includes(st.id);
+                          const waitlistPos = (session.waitlistStudentIds || []).indexOf(st.id) + 1;
+                          const missingReqs = getStudentMissingRequirements(st);
+
+                          return (
+                            <div 
+                              key={st.id} 
+                              className="py-2 px-1 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <span className="font-bold text-slate-900 block truncate">
+                                  {st.lastName} {st.firstName}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  {st.classGroup || 'Classe non renseignée'}
+                                </span>
+                              </div>
+
+                              <div className="shrink-0">
+                                {isAlreadyEnrolled ? (
+                                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-lg">
+                                    Déjà inscrit(e) ✓
+                                  </span>
+                                ) : isAlreadyWaitlisted ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-bold text-purple-700 bg-purple-100 px-2.5 py-1 rounded-lg">
+                                      En attente (Rang #{waitlistPos})
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleLeaveWaitlist(st.id)}
+                                      className="text-slate-400 hover:text-rose-600 p-1 text-xs cursor-pointer"
+                                      title="Se retirer de la liste d'attente"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : missingReqs.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => alert(`Critères manquants pour ${st.firstName} : ${missingReqs.join(', ')}`)}
+                                    className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200 cursor-pointer"
+                                  >
+                                    Critères manquants ⚠️
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleJoinWaitlist(st)}
+                                    disabled={isJoiningWaitlist && enrollingId === st.id}
+                                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                  >
+                                    <BookmarkPlus className="w-3.5 h-3.5" />
+                                    <span>Rejoindre la liste</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions retour */}
+                <div className="pt-1 flex items-center justify-between gap-2">
+                  <button 
+                    onClick={handleGoBack}
+                    className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    ← Retour au calendrier
+                  </button>
+                </div>
               </div>
             ) : isPast ? (
               <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-3">

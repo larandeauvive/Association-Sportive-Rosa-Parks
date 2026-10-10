@@ -512,6 +512,36 @@ async function startServer() {
     }
   });
 
+  // Waitlist endpoints
+  app.post('/api/sessions/:id/waitlist', async (req, res) => {
+    try {
+      const { studentId } = req.body;
+      if (!studentId) return res.status(400).json({ error: 'Identifiant élève manquant' });
+
+      const session = await getSessionById(req.params.id);
+      if (!session) return res.status(404).json({ error: 'Séance non trouvée' });
+
+      const waitlist = Array.from(new Set([...(session.waitlistStudentIds || []), studentId]));
+      await updateSessionById(req.params.id, { waitlistStudentIds: waitlist });
+      res.json({ success: true, waitlist });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/sessions/:id/waitlist/:studentId', async (req, res) => {
+    try {
+      const session = await getSessionById(req.params.id);
+      if (!session) return res.status(404).json({ error: 'Séance non trouvée' });
+
+      const waitlist = (session.waitlistStudentIds || []).filter(id => id !== req.params.studentId);
+      await updateSessionById(req.params.id, { waitlistStudentIds: waitlist });
+      res.json({ success: true, waitlist });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Public/team enrollment endpoint
   app.post('/api/sessions/:id/enroll-team', async (req, res) => {
     try {

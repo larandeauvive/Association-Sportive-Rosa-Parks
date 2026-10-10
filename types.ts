@@ -108,6 +108,7 @@ export interface Session {
   schoolYear: string;
   enrolledStudentIds: string[]; // Élèves inscrits
   presentStudentIds: string[]; // Élèves pointés présents
+  waitlistStudentIds?: string[]; // Élèves placés sur liste d'attente lorsque la séance est complète
   convocationId?: string; // ID de la convocation liée
   maxParticipants?: number; // Nombre maximum de participants
   targetAudience?: 'students' | 'adults' | 'all';

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Student, Session } from '../types';
-import { saveSessionApi } from '../lib/db';
+import { Student, Session, Teacher } from '../types';
+import { saveSessionApi, promoteFromWaitlistApi, leaveSessionWaitlistApi, getTeachersList } from '../lib/db';
 import { getSessionDayName, getSessionCategory } from '../lib/sessionUtils';
+import { GenerateSessionFromWaitlistModal } from './GenerateSessionFromWaitlistModal';
 import { 
   CheckCircle2, Circle, Users, UserCheck, PlusCircle, Search, 
   Printer, Share2, Check, Moon, Zap, Calendar, Clock, X,
-  AlertCircle
+  AlertCircle, Hourglass, Sparkles, UserPlus, Trash2, ArrowUpRight
 } from 'lucide-react';
 
 interface Props {
@@ -14,7 +15,9 @@ interface Props {
   onClose: () => void;
   students: Student[];
   activeYear: string;
+  teachers?: Teacher[];
   onSessionUpdated?: (updatedSession: Session) => void;
+  onNewSessionCreated?: (newSessionId: string) => void;
 }
 
 export const SessionRollCallModal: React.FC<Props> = ({
@@ -23,7 +26,9 @@ export const SessionRollCallModal: React.FC<Props> = ({
   onClose,
   students,
   activeYear,
+  teachers: teachersProp,
   onSessionUpdated,
+  onNewSessionCreated,
 }) => {
   // Local active session for fast optimistic updates
   const [currentSession, setCurrentSession] = useState<Session | null>(session);
@@ -37,6 +42,18 @@ export const SessionRollCallModal: React.FC<Props> = ({
   // Search for direct student enrollment
   const [addSearch, setAddSearch] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
+
+  // Modal de dédoublement de séance depuis liste d'attente
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [teachersList, setTeachersList] = useState<Teacher[]>(teachersProp || []);
+
+  useEffect(() => {
+    if (teachersProp && teachersProp.length > 0) {
+      setTeachersList(teachersProp);
+    } else {
+      getTeachersList().then(list => setTeachersList(list || [])).catch(() => {});
+    }
+  }, [teachersProp]);
 
   // Sync when prop session changes or modal opens
   useEffect(() => {
@@ -252,6 +269,44 @@ export const SessionRollCallModal: React.FC<Props> = ({
         ...updated,
         id: updated.id,
       });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Promouvoir un élève de la liste d'attente vers les inscrits
+  const handlePromoteWaitlistStudent = async (studentId: string) => {
+    if (!currentSession) return;
+    try {
+      await promoteFromWaitlistApi(currentSession.id, studentId);
+      const updatedWaitlist = (currentSession.waitlistStudentIds || []).filter(id => id !== studentId);
+      const updatedEnrolled = Array.from(new Set([...(currentSession.enrolledStudentIds || []), studentId]));
+      const updated: Session = {
+        ...currentSession,
+        waitlistStudentIds: updatedWaitlist,
+        enrolledStudentIds: updatedEnrolled
+      };
+      setCurrentSession(updated);
+      if (onSessionUpdated) onSessionUpdated(updated);
+      setNotification(`✅ Élève promu de la liste d'attente vers les inscrits !`);
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.message || "Erreur lors de la promotion.");
+    }
+  };
+
+  // Retirer un élève de la liste d'attente
+  const handleRemoveFromWaitlist = async (studentId: string) => {
+    if (!currentSession) return;
+    try {
+      await leaveSessionWaitlistApi(currentSession.id, studentId);
+      const updatedWaitlist = (currentSession.waitlistStudentIds || []).filter(id => id !== studentId);
+      const updated: Session = {
+        ...currentSession,
+        waitlistStudentIds: updatedWaitlist
+      };
+      setCurrentSession(updated);
+      if (onSessionUpdated) onSessionUpdated(updated);
     } catch (err) {
       console.error(err);
     }
@@ -830,7 +885,123 @@ export const SessionRollCallModal: React.FC<Props> = ({
               </p>
             )}
           </div>
+
+          {/* SECTION DÉDIÉE : LISTE D'ATTENTE DE LA SÉANCE */}
+          <div className="bg-purple-50/80 border-2 border-purple-300 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-700 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                  <Hourglass className="w-5 h-5 text-purple-200" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-purple-950 text-sm sm:text-base">
+                      Liste d'attente
+                    </h3>
+                    <span className="bg-purple-200 text-purple-900 text-xs font-black px-2 py-0.5 rounded-full border border-purple-300">
+                      {(currentSession.waitlistStudentIds || []).length} élève(s)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-purple-800 font-medium">
+                    Élèves pré-inscrits lorsque la séance était complète. Vous pouvez les promouvoir ou créer un nouveau créneau dédoublé.
+                  </p>
+                </div>
+              </div>
+
+              {/* Bouton clé : Créer une autre séance sur un autre jour à partir de cette liste d'attente */}
+              <button
+                type="button"
+                onClick={() => setIsGenerateModalOpen(true)}
+                disabled={(currentSession.waitlistStudentIds || []).length === 0}
+                className="px-4 py-2.5 bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-800 hover:to-indigo-800 active:scale-95 text-white font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                title="Générer une nouvelle séance sur un autre jour avec les élèves de la liste d'attente"
+              >
+                <Sparkles className="w-4 h-4 text-purple-200" />
+                <span>+ Générer une séance depuis cette liste</span>
+              </button>
+            </div>
+
+            {/* Liste des élèves en attente */}
+            {(currentSession.waitlistStudentIds || []).length === 0 ? (
+              <p className="text-xs text-purple-700/80 italic py-3 text-center bg-white/70 rounded-xl border border-purple-200">
+                Aucun élève en liste d'attente actuellement sur cette séance.
+              </p>
+            ) : (
+              <div className="bg-white rounded-xl border border-purple-200 divide-y divide-purple-100 max-h-56 overflow-y-auto shadow-2xs">
+                {(currentSession.waitlistStudentIds || []).map((studentId, idx) => {
+                  const student = students.find(s => s.id === studentId);
+                  const isAuth = String(student?.parentalAuth).toUpperCase() === 'OUI';
+                  const isPaid = String(student?.paid).toUpperCase() === 'OUI';
+
+                  return (
+                    <div
+                      key={studentId}
+                      className="p-3 flex items-center justify-between gap-3 hover:bg-purple-50/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="text-[11px] font-black w-6 h-6 rounded-full bg-purple-100 text-purple-800 flex items-center justify-center shrink-0">
+                          #{idx + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-black text-slate-900 text-xs sm:text-sm truncate flex items-center gap-2">
+                            <span>{student ? `${student.lastName} ${student.firstName}` : studentId}</span>
+                            {student?.classGroup && (
+                              <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">
+                                {student.classGroup}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium mt-0.5">
+                            <span>AP: {isAuth ? '✓' : '✗'}</span>
+                            <span>•</span>
+                            <span>Cotisation: {isPaid ? '✓' : '✗'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handlePromoteWaitlistStudent(studentId)}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-2xs flex items-center gap-1 cursor-pointer"
+                          title="Promouvoir dans la liste principale des inscrits"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Promouvoir inscrit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Retirer cet élève de la liste d'attente ?`)) {
+                              handleRemoveFromWaitlist(studentId);
+                            }
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Retirer de la liste d'attente"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Modal de dédoublement de séance */}
+        <GenerateSessionFromWaitlistModal
+          session={currentSession}
+          isOpen={isGenerateModalOpen}
+          onClose={() => setIsGenerateModalOpen(false)}
+          students={students}
+          teachers={teachersList}
+          onSessionCreated={(newId) => {
+            setNotification('🎉 Nouvelle séance créée avec succès sur un autre jour à partir de la liste d\'attente !');
+            if (onNewSessionCreated) onNewSessionCreated(newId);
+          }}
+        />
 
         {/* Pied de l'encadré */}
         <div className="p-3 sm:p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">

@@ -453,9 +453,16 @@ export const TeacherRollCall: React.FC<Props> = ({ students, activeYear }) => {
                   <div className="pt-2.5 border-t border-slate-100 space-y-2">
                     <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                       <span className="text-slate-500 text-[11px]">Présences :</span>
-                      <span className="text-emerald-700 font-black">
-                        {present} / {enrolled} ({percent}%)
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-emerald-700 font-black">
+                          {present} / {enrolled} ({percent}%)
+                        </span>
+                        {(s.waitlistStudentIds || []).length > 0 && (
+                          <span className="bg-purple-100 text-purple-800 text-[10px] font-black px-1.5 py-0.5 rounded border border-purple-200" title="Élèves sur liste d'attente">
+                            ⏳ {(s.waitlistStudentIds || []).length} attente
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
@@ -550,6 +557,15 @@ export const TeacherRollCall: React.FC<Props> = ({ students, activeYear }) => {
         students={students}
         activeYear={activeYear}
         onSessionUpdated={handleSessionUpdated}
+        onNewSessionCreated={async (newId) => {
+          await loadSessions();
+          const updatedList = await getSessionsList(activeYear);
+          const found = updatedList.find(s => s.id === newId);
+          if (found) {
+            setModalSession(found);
+            setIsModalOpen(true);
+          }
+        }}
       />
     </div>
   );

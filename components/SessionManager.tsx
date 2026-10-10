@@ -1515,6 +1515,14 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            {(s.waitlistStudentIds || []).length > 0 && (
+              <span 
+                className="px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200"
+                title={`${(s.waitlistStudentIds || []).length} élève(s) en liste d'attente`}
+              >
+                ⏳ {(s.waitlistStudentIds || []).length}
+              </span>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -3803,6 +3811,20 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                   {activeSession.needSnack && (
                     <span className="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-1 rounded-full border border-amber-200">Goûter à prévoir</span>
                   )}
+                  {(activeSession.waitlistStudentIds || []).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRollCallModalSession(activeSession);
+                        setIsRollCallModalOpen(true);
+                      }}
+                      className="bg-purple-100 hover:bg-purple-200 text-purple-900 text-xs font-black px-2.5 py-1 rounded-full border border-purple-300 flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+                      title="Cliquer pour voir la liste d'attente ou générer une nouvelle séance"
+                    >
+                      <span>⏳ {(activeSession.waitlistStudentIds || []).length} en liste d'attente</span>
+                      <span className="text-[10px] bg-purple-700 text-white px-1.5 py-0.2 rounded-full">Gérer →</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-1 mt-2">
@@ -4653,9 +4675,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         onClose={() => setIsRollCallModalOpen(false)}
         students={students}
         activeYear={activeYear}
+        teachers={teachers}
         onSessionUpdated={(updated) => {
           setSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
           setRollCallModalSession(updated);
+        }}
+        onNewSessionCreated={async (newId) => {
+          await fetchSessionManagerData();
+          setActiveSessionId(newId);
+          setIsCreating(false);
         }}
       />
     </div>

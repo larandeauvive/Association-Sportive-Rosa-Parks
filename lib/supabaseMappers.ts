@@ -78,6 +78,7 @@ export function rowToSession(row: any): Session {
     schoolYear: row.school_year ?? row.schoolYear,
     enrolledStudentIds: row.enrolled_student_ids ?? row.enrolledStudentIds ?? [],
     presentStudentIds: row.present_student_ids ?? row.presentStudentIds ?? [],
+    waitlistStudentIds: row.waitlist_student_ids ?? row.waitlistStudentIds ?? [],
     convocationId: row.convocation_id ?? row.convocationId,
     maxParticipants: row.max_participants ?? row.maxParticipants,
     targetAudience: row.target_audience ?? row.targetAudience ?? 'students',
@@ -122,6 +123,7 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.schoolYear !== undefined) row.school_year = session.schoolYear;
   if (session.enrolledStudentIds !== undefined) row.enrolled_student_ids = session.enrolledStudentIds;
   if (session.presentStudentIds !== undefined) row.present_student_ids = session.presentStudentIds;
+  if (session.waitlistStudentIds !== undefined) row.waitlist_student_ids = session.waitlistStudentIds;
   if (session.convocationId !== undefined) row.convocation_id = session.convocationId;
   if (session.maxParticipants !== undefined) row.max_participants = session.maxParticipants;
   if (session.targetAudience !== undefined) row.target_audience = session.targetAudience;

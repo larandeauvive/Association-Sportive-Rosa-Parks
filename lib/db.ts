@@ -1177,6 +1177,192 @@ export const deleteTeamFromSession = async (
   }
 };
 
+/**
+ * Inscription d'un élève sur la liste d'attente d'une séance complète
+ */
+export const joinSessionWaitlistApi = async (sessionId: string, studentId: string): Promise<void> => {
+  const localSessions = getLocalSessions();
+  const localSes = localSessions.find(s => s.id === sessionId);
+
+  if (localSes) {
+    const waitlist = Array.from(new Set([...(localSes.waitlistStudentIds || []), studentId]));
+    saveLocalSession({ ...localSes, waitlistStudentIds: waitlist });
+  }
+
+  // Firestore
+  try {
+    const sDocRef = doc(firestoreDb, 'sessions', sessionId);
+    const sDocSnap = await getDoc(sDocRef);
+    if (sDocSnap.exists()) {
+      const sData = sDocSnap.data();
+      const currentWaitlist: string[] = sData.waitlist_student_ids || sData.waitlistStudentIds || [];
+      const updatedWaitlist = Array.from(new Set([...currentWaitlist, studentId]));
+      await setDoc(sDocRef, {
+        waitlist_student_ids: updatedWaitlist,
+        waitlistStudentIds: updatedWaitlist
+      }, { merge: true });
+    }
+  } catch (fsErr) {
+    console.warn('Firestore joinWaitlist error:', fsErr);
+  }
+
+  // API Express
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/waitlist`, {
+        method: 'POST',
+        body: JSON.stringify({ studentId })
+      });
+    } catch {
+      // ok
+    }
+  }
+
+  // Supabase
+  if (!isTableMissingInSupabase('sessions')) {
+    try {
+      const { data: currentSession } = await supabase
+        .from('sessions')
+        .select('waitlist_student_ids')
+        .eq('id', sessionId)
+        .single();
+      if (currentSession) {
+        const list: string[] = currentSession.waitlist_student_ids || [];
+        if (!list.includes(studentId)) {
+          list.push(studentId);
+          await supabase.from('sessions').update({ waitlist_student_ids: list }).eq('id', sessionId);
+        }
+      }
+    } catch {
+      // ok
+    }
+  }
+};
+
+/**
+ * Retirer un élève de la liste d'attente d'une séance
+ */
+export const leaveSessionWaitlistApi = async (sessionId: string, studentId: string): Promise<void> => {
+  const localSessions = getLocalSessions();
+  const localSes = localSessions.find(s => s.id === sessionId);
+
+  if (localSes) {
+    const waitlist = (localSes.waitlistStudentIds || []).filter(id => id !== studentId);
+    saveLocalSession({ ...localSes, waitlistStudentIds: waitlist });
+  }
+
+  // Firestore
+  try {
+    const sDocRef = doc(firestoreDb, 'sessions', sessionId);
+    const sDocSnap = await getDoc(sDocRef);
+    if (sDocSnap.exists()) {
+      const sData = sDocSnap.data();
+      const currentWaitlist: string[] = sData.waitlist_student_ids || sData.waitlistStudentIds || [];
+      const updatedWaitlist = currentWaitlist.filter(id => id !== studentId);
+      await setDoc(sDocRef, {
+        waitlist_student_ids: updatedWaitlist,
+        waitlistStudentIds: updatedWaitlist
+      }, { merge: true });
+    }
+  } catch (fsErr) {
+    console.warn('Firestore leaveWaitlist error:', fsErr);
+  }
+
+  // API Express
+  const hasServer = await isApiServerAvailable();
+  if (hasServer) {
+    try {
+      await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/waitlist/${encodeURIComponent(studentId)}`, {
+        method: 'DELETE'
+      });
+    } catch {
+      // ok
+    }
+  }
+
+  // Supabase
+  if (!isTableMissingInSupabase('sessions')) {
+    try {
+      const { data: currentSession } = await supabase
+        .from('sessions')
+        .select('waitlist_student_ids')
+        .eq('id', sessionId)
+        .single();
+      if (currentSession) {
+        const list: string[] = (currentSession.waitlist_student_ids || []).filter(id => id !== studentId);
+        await supabase.from('sessions').update({ waitlist_student_ids: list }).eq('id', sessionId);
+      }
+    } catch {
+      // ok
+    }
+  }
+};
+
+/**
+ * Promouvoir un élève de la liste d'attente vers la liste principale des inscrits
+ */
+export const promoteFromWaitlistApi = async (sessionId: string, studentId: string): Promise<void> => {
+  await leaveSessionWaitlistApi(sessionId, studentId);
+  await enrollInSession(sessionId, studentId);
+};
+
+/**
+ * Générer une nouvelle séance sur un autre jour à partir de la liste d'attente d'une séance
+ */
+export const generateSessionFromWaitlistApi = async (
+  sourceSession: Session,
+  newSessionData: {
+    name?: string;
+    date: string;
+    time: string;
+    endTime?: string;
+    location?: string;
+    teacherIds?: string[];
+    maxParticipants?: number;
+    studentIdsToTransfer: string[];
+    removeFromSourceWaitlist: boolean;
+  }
+): Promise<string> => {
+  const newSession: Partial<Session> = {
+    name: newSessionData.name || sourceSession.name,
+    date: newSessionData.date,
+    time: newSessionData.time || sourceSession.time,
+    endTime: newSessionData.endTime || sourceSession.endTime,
+    location: newSessionData.location || sourceSession.location,
+    teacherIds: newSessionData.teacherIds || sourceSession.teacherIds || [],
+    maxParticipants: newSessionData.maxParticipants ?? sourceSession.maxParticipants,
+    schoolYear: sourceSession.schoolYear,
+    requireLicense: !!sourceSession.requireLicense,
+    requireParentalAuth: !!sourceSession.requireParentalAuth,
+    requireSwimmingCertificate: !!sourceSession.requireSwimmingCertificate,
+    requirePaid: !!sourceSession.requirePaid,
+    targetAudience: sourceSession.targetAudience || 'students',
+    description: sourceSession.description ? `(Créé suite à liste d'attente du ${sourceSession.date}) ${sourceSession.description}` : `Séance supplémentaire créée depuis la liste d'attente de la séance du ${sourceSession.date}`,
+    registrationDaysBefore: sourceSession.registrationDaysBefore,
+    registrationCloseTime: sourceSession.registrationCloseTime,
+    enrolledStudentIds: Array.from(new Set(newSessionData.studentIdsToTransfer)),
+    presentStudentIds: [],
+    waitlistStudentIds: []
+  };
+
+  const { id: newSessionId } = await saveSessionApi(newSession);
+
+  // Si demandé, retirer les élèves transférés de la liste d'attente de la séance source
+  if (newSessionData.removeFromSourceWaitlist && newSessionData.studentIdsToTransfer.length > 0) {
+    const updatedSourceWaitlist = (sourceSession.waitlistStudentIds || []).filter(
+      id => !newSessionData.studentIdsToTransfer.includes(id)
+    );
+    await saveSessionApi({
+      ...sourceSession,
+      id: sourceSession.id,
+      waitlistStudentIds: updatedSourceWaitlist
+    });
+  }
+
+  return newSessionId;
+};
+
 // ----------------------------------------------------
 // CONVOCATIONS
 // ----------------------------------------------------
