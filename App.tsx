@@ -536,6 +536,9 @@ export default function App() {
             if (c.key === 'paid' && s.freeLicense) val = 'GRATUIT';
             if (c.key === 'paymentMethod' && s.freeLicense) val = 'Licence gratuite';
             if (c.key === 'amount' && s.freeLicense) val = '0 €';
+            if (c.key === 'parentalAuth') val = String(s.parentalAuth).toUpperCase() === 'OUI' ? '✓ Validée' : '✗ Manquante';
+            if (c.key === 'imageRights') val = String(s.imageRights).toUpperCase() === 'OUI' ? '✓ Validé' : '✗ Refusé';
+            if (c.key === 'swimmingCertificate') val = String(s.swimmingCertificate).toUpperCase() === 'OUI' ? '✓ Validé' : '✗ Non validé';
             printWindow.document.write(`<td>${val}</td>`);
           });
           printWindow.document.write('</tr>');

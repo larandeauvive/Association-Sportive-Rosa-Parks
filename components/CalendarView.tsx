@@ -1108,7 +1108,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                 <th>Nom</th>
                 <th>Prénom</th>
                 ${!isPublic ? '<th>Classe</th>' : ''}
-                ${type === 'convocation' ? '<th>N° Licence</th><th>Catégorie</th><th>AP</th><th>Nage</th>' : ''}
+                ${type === 'convocation' ? '<th>N° Licence</th><th>Catégorie</th><th>AP</th><th>Droit Image</th><th>Savoir Nager</th>' : ''}
                 ${type === 'liste' && !isPublic ? '<th>Présent</th><th>Observation</th>' : ''}
                 ${type === 'convocation' ? '<th>Signature</th>' : ''}
               </tr>
@@ -1119,7 +1119,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                   <td><strong>${s.lastName || ''}</strong></td>
                   <td>${s.firstName || ''}</td>
                   ${!isPublic ? `<td>${s.classGroup || ''}</td>` : ''}
-                  ${type === 'convocation' ? `<td style="font-family: monospace;">${s.licenseNumber || '-'}</td><td><strong>${getStudentCategory(s, activeYear)}</strong></td><td style="text-align:center;">${s.parentalAuth === 'OUI' ? '✓' : '✗'}</td><td style="text-align:center;">${s.swimmingCertificate === 'OUI' ? '✓' : '✗'}</td>` : ''}
+                  ${type === 'convocation' ? `<td style="font-family: monospace;">${s.licenseNumber || '-'}</td><td><strong>${getStudentCategory(s, activeYear)}</strong></td><td style="text-align:center; font-weight:bold; color: ${s.parentalAuth === 'OUI' ? '#16a34a' : '#dc2626'}">${s.parentalAuth === 'OUI' ? '✓' : '✗'}</td><td style="text-align:center; font-weight:bold; color: ${s.imageRights === 'OUI' ? '#16a34a' : '#d97706'}">${s.imageRights === 'OUI' ? '✓' : '✗'}</td><td style="text-align:center; font-weight:bold; color: ${s.swimmingCertificate === 'OUI' ? '#0284c7' : '#64748b'}">${s.swimmingCertificate === 'OUI' ? '✓' : '✗'}</td>` : ''}
                   ${type === 'liste' && !isPublic ? '<td></td><td></td>' : ''}
                   ${type === 'convocation' ? '<td></td>' : ''}
                 </tr>

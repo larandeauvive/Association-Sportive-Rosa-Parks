@@ -82,6 +82,8 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
       { key: 'licenseNumber', label: 'N° Licence' },
       { key: 'paid', label: 'Payé' },
       { key: 'parentalAuth', label: 'Auto. Parentale' },
+      { key: 'imageRights', label: 'Droit Image' },
+      { key: 'swimmingCertificate', label: 'Savoir Nager' },
     ];
 
     const printWindow = window.open('', '', 'height=650,width=850');
@@ -111,7 +113,14 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
             <tbody>
               ${dataToProcess.map(s => `
                 <tr>
-                  ${activeColumns.map(c => `<td>${c.key === 'birthDate' ? formatDateFr(s[c.key] as string) : (s[c.key] || '')}</td>`).join('')}
+                  ${activeColumns.map(c => {
+                    if (c.key === 'birthDate') return `<td>${formatDateFr(s[c.key] as string)}</td>`;
+                    if (c.key === 'parentalAuth') return `<td style="text-align:center; font-weight:bold; color:${s.parentalAuth === 'OUI' ? '#16a34a' : '#dc2626'}">${s.parentalAuth === 'OUI' ? '✓ Validée' : '✗ Manquante'}</td>`;
+                    if (c.key === 'imageRights') return `<td style="text-align:center; font-weight:bold; color:${s.imageRights === 'OUI' ? '#16a34a' : '#d97706'}">${s.imageRights === 'OUI' ? '✓ Validé' : '✗ Refusé'}</td>`;
+                    if (c.key === 'swimmingCertificate') return `<td style="text-align:center; font-weight:bold; color:${s.swimmingCertificate === 'OUI' ? '#0284c7' : '#64748b'}">${s.swimmingCertificate === 'OUI' ? '✓ Validé' : '✗ Non validé'}</td>`;
+                    if (c.key === 'paid') return `<td style="text-align:center; font-weight:bold; color:${s.paid === 'OUI' ? '#16a34a' : '#dc2626'}">${s.freeLicense ? 'GRATUIT' : (s.paid || '')}</td>`;
+                    return `<td>${s[c.key] || ''}</td>`;
+                  }).join('')}
                 </tr>
               `).join('')}
             </tbody>
@@ -286,6 +295,8 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
                 { key: 'licenseNumber', label: 'N° Licence', visible: true },
                 { key: 'paid', label: 'Payé', visible: true },
                 { key: 'parentalAuth', label: 'Auto. Parentale', visible: true },
+                { key: 'imageRights', label: 'Droit Image', visible: true },
+                { key: 'swimmingCertificate', label: 'Savoir Nager', visible: true },
               ]}
               selectedIds={selectedIds}
               onSelectAll={handleSelectAll}

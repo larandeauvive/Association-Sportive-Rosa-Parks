@@ -21,7 +21,7 @@ interface Props {
   onAutoCreateConsumed?: () => void;
 }
 
-const DEFAULT_CRITERIA_IDS = ['classGroup', 'licenseNumber', 'category', 'parentalAuth', 'swimmingCertificate', 'signature'];
+const DEFAULT_CRITERIA_IDS = ['classGroup', 'licenseNumber', 'category', 'parentalAuth', 'imageRights', 'swimmingCertificate', 'signature'];
 
 export const ConvocationManager: React.FC<Props> = ({ students, activeYear, autoCreateNew, onAutoCreateConsumed }) => {
   const [convocations, setConvocations] = useState<Convocation[]>([]);
@@ -555,15 +555,15 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                     case 'gender':
                       return `<td class="center">${s.gender || '-'}</td>`;
                     case 'parentalAuth':
-                      return `<td class="center bold">${s.parentalAuth === 'OUI' ? '✓' : '<span style="color:#dc2626;">✗</span>'}</td>`;
+                      return `<td class="center bold" style="color:${s.parentalAuth === 'OUI' ? '#16a34a' : '#dc2626'}">${s.parentalAuth === 'OUI' ? '✓ Validée' : '✗ Manquante'}</td>`;
+                    case 'imageRights':
+                      return `<td class="center bold" style="color:${s.imageRights === 'OUI' ? '#16a34a' : '#d97706'}">${s.imageRights === 'OUI' ? '✓ Validé' : '✗ Refusé'}</td>`;
                     case 'swimmingCertificate':
-                      return `<td class="center">${s.swimmingCertificate === 'OUI' ? '✓' : '✗'}</td>`;
+                      return `<td class="center bold" style="color:${s.swimmingCertificate === 'OUI' ? '#0284c7' : '#64748b'}">${s.swimmingCertificate === 'OUI' ? '✓ Validé' : '✗ Non validé'}</td>`;
                     case 'paid':
                       return `<td class="center">${s.paid === 'OUI' ? '✓' : '<span style="color:#dc2626;">Non</span>'}</td>`;
                     case 'size':
                       return `<td class="center">${s.size || '-'}</td>`;
-                    case 'imageRights':
-                      return `<td class="center">${s.imageRights === 'OUI' ? '✓' : '✗'}</td>`;
                     case 'signature':
                       return `<td style="min-width: 80px;"></td>`;
                     default:
@@ -636,10 +636,13 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
         <table>
           <thead>
             <tr>
-              <th style="width: 35%;">Nom</th>
-              <th style="width: 35%;">Prénom</th>
-              <th style="width: 15%; text-align: center;">Classe</th>
-              <th style="width: 15%; text-align: center;">Catégorie</th>
+              <th style="width: 26%;">Nom</th>
+              <th style="width: 22%;">Prénom</th>
+              <th style="width: 12%; text-align: center;">Classe</th>
+              <th style="width: 14%; text-align: center;">Catégorie</th>
+              <th style="width: 9%; text-align: center;">Auto. Par.</th>
+              <th style="width: 9%; text-align: center;">Droit Img</th>
+              <th style="width: 8%; text-align: center;">Nage</th>
             </tr>
           </thead>
           <tbody>
@@ -649,6 +652,9 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                 <td>${s.firstName}</td>
                 <td style="font-weight: bold; text-align: center;">${s.classGroup || '-'}</td>
                 <td style="font-weight: bold; text-align: center;">${getStudentCategory(s, activeYear)}</td>
+                <td style="text-align: center; font-weight: bold; color: ${s.parentalAuth === 'OUI' ? '#16a34a' : '#dc2626'}">${s.parentalAuth === 'OUI' ? '✓' : '✗'}</td>
+                <td style="text-align: center; font-weight: bold; color: ${s.imageRights === 'OUI' ? '#16a34a' : '#d97706'}">${s.imageRights === 'OUI' ? '✓' : '✗'}</td>
+                <td style="text-align: center; font-weight: bold; color: ${s.swimmingCertificate === 'OUI' ? '#0284c7' : '#64748b'}">${s.swimmingCertificate === 'OUI' ? '✓' : '✗'}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -663,6 +669,134 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
       printWindow.focus();
       printWindow.print();
     }
+  };
+
+  // Téléchargement direct du fichier officiel de convocation autonome
+  const handleDownloadConvocation = (conv: Convocation) => {
+    const convStudents = students.filter(s => conv.studentIds?.includes(s.id));
+    convStudents.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+
+    const teacherNames = conv.teacherIds?.map(id => teachers.find(t => t.id === id)?.name).filter(Boolean).join(', ');
+    const accompagnateursStr = [teacherNames, conv.guides].filter(Boolean).join(', ') || 'Aucun';
+
+    const activeCriteria = (conv.selectedCriteria && conv.selectedCriteria.length > 0)
+      ? conv.selectedCriteria
+      : DEFAULT_CRITERIA_IDS;
+
+    const visibleCols = AVAILABLE_CONVOCATION_CRITERIA.filter(c => activeCriteria.includes(c.id));
+
+    const htmlContent = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><title>Convocation UNSS - ${conv.competitionName}</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; padding: 25px; color: #0f172a; line-height: 1.4; max-width: 1050px; margin: 0 auto; }
+  .header { text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 20px; }
+  h1 { margin: 0 0 6px 0; font-size: 22px; color: #0f172a; text-transform: uppercase; }
+  .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
+  .meta-item strong { display: block; font-size: 11px; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
+  .meta-item span { font-size: 14px; font-weight: bold; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 15px; }
+  th, td { border: 1px solid #cbd5e1; padding: 7px 9px; text-align: left; }
+  th { background-color: #f1f5f9; font-weight: bold; text-transform: uppercase; font-size: 11px; }
+  tr:nth-child(even) { background-color: #f8fafc; }
+  .center { text-align: center; }
+  .bold { font-weight: bold; }
+  .mono { font-family: monospace; }
+  .print-btn { display: inline-block; background: #0f172a; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 12px; margin-bottom: 15px; cursor: pointer; border: none; }
+  @media print { .no-print { display: none; } }
+</style></head><body>
+<div class="no-print" style="margin-bottom: 15px; text-align: right;">
+  <button onclick="window.print()" class="print-btn">🖨️ Imprimer / Enregistrer en PDF</button>
+</div>
+<div class="header">
+  <h1>Convocation Officielle UNSS</h1>
+  <p style="margin:0; font-weight: bold; color: #334155; font-size: 16px;">${conv.competitionName}</p>
+</div>
+<div class="meta-grid">
+  <div class="meta-item"><strong>Lieu du RDV</strong><span>${conv.meetingLocation || 'Non spécifié'}</span></div>
+  <div class="meta-item"><strong>Heure du RDV</strong><span>${conv.meetingTime || new Date(conv.departureDate).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'})}</span></div>
+  <div class="meta-item"><strong>Heure de retour</strong><span>${conv.returnTime || new Date(conv.returnDate).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'})}</span></div>
+  ${conv.cafeteriaTime ? `<div class="meta-item"><strong>Passage au self</strong><span>${conv.cafeteriaTime}</span></div>` : ''}
+  <div class="meta-item"><strong>Accompagnateurs</strong><span>${accompagnateursStr}</span></div>
+  <div class="meta-item">
+     <strong>À prévoir</strong>
+     <span style="font-size: 13px; font-weight: normal;">
+       ${conv.needSnack === 'OUI' ? 'Goûter : OUI<br>' : ''}
+       ${conv.needPicnic === 'OUI' ? 'Pique-nique : OUI' : ''}
+     </span>
+  </div>
+</div>
+
+${(conv.tshirtManagerId || (conv.snackManagerIds?.length || 0) > 0) ? `
+  <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+    <div style="font-size: 11px; font-weight: bold; color: #166534; text-transform: uppercase; margin-bottom: 4px;">Responsabilités Élèves Désignées</div>
+    <div style="display: flex; gap: 20px; font-size: 13px;">
+      ${conv.tshirtManagerId ? `<div><strong>👕 Responsable Maillots :</strong> ${students.find(s => s.id === conv.tshirtManagerId)?.lastName || ''} ${students.find(s => s.id === conv.tshirtManagerId)?.firstName || ''}</div>` : ''}
+      ${(conv.snackManagerIds?.length || 0) > 0 ? `<div><strong>🥪 Goûter/Pique-Nique :</strong> ${conv.snackManagerIds!.map(id => students.find(s => s.id === id)?.lastName).join(', ')}</div>` : ''}
+    </div>
+  </div>
+` : ''}
+
+<h3 style="margin: 0 0 8px 0; font-size: 15px;">Élèves Convoqués (${convStudents.length})</h3>
+<table>
+  <thead>
+    <tr>
+      <th style="width: 25px;">#</th>
+      <th>Nom & Prénom</th>
+      ${visibleCols.map(col => `<th class="center">${col.label}</th>`).join('')}
+    </tr>
+  </thead>
+  <tbody>
+    ${convStudents.map((s, idx) => `
+      <tr>
+        <td class="center" style="color: #64748b;">${idx + 1}</td>
+        <td class="bold">${s.lastName} ${s.firstName}</td>
+        ${visibleCols.map(col => {
+          switch (col.id) {
+            case 'classGroup':
+              return `<td class="center bold">${s.classGroup || '-'}</td>`;
+            case 'licenseNumber':
+              return `<td class="center mono">${s.licenseNumber || '<span style="color:#dc2626;">Non licencié</span>'}</td>`;
+            case 'category':
+              return `<td class="center bold">${getStudentCategory(s, activeYear)}</td>`;
+            case 'birthDate':
+              return `<td class="center">${s.birthDate || '-'}</td>`;
+            case 'gender':
+              return `<td class="center">${s.gender || '-'}</td>`;
+            case 'parentalAuth':
+              return `<td class="center bold" style="color:${s.parentalAuth === 'OUI' ? '#16a34a' : '#dc2626'}">${s.parentalAuth === 'OUI' ? '✓ Validée' : '✗ Manquante'}</td>`;
+            case 'imageRights':
+              return `<td class="center bold" style="color:${s.imageRights === 'OUI' ? '#16a34a' : '#d97706'}">${s.imageRights === 'OUI' ? '✓ Validé' : '✗ Refusé'}</td>`;
+            case 'swimmingCertificate':
+              return `<td class="center bold" style="color:${s.swimmingCertificate === 'OUI' ? '#0284c7' : '#64748b'}">${s.swimmingCertificate === 'OUI' ? '✓ Validé' : '✗ Non validé'}</td>`;
+            case 'paid':
+              return `<td class="center">${s.paid === 'OUI' ? '✓' : '<span style="color:#dc2626;">Non</span>'}</td>`;
+            case 'size':
+              return `<td class="center">${s.size || '-'}</td>`;
+            case 'signature':
+              return `<td style="min-width: 80px;"></td>`;
+            default:
+              return `<td class="center">-</td>`;
+          }
+        }).join('')}
+      </tr>
+    `).join('')}
+  </tbody>
+</table>
+
+<div style="margin-top: 30px; text-align: center; font-size: 11px; color: #64748b;">
+   Document généré le ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})} - Association Sportive Rosa Parks
+</div>
+</body></html>`;
+
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `convocation_${(conv.competitionName || 'unss').replace(/[^a-zA-Z0-9_-]/g, '_')}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Séance liée pour la convocation active
@@ -776,6 +910,13 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                       )}
                     </button>
                     <button 
+                      onClick={(e) => { e.stopPropagation(); handleDownloadConvocation(conv); }} 
+                      className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" 
+                      title="Télécharger la convocation officielle (avec validation AP, Droit Image et Savoir Nager)"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    </button>
+                    <button 
                       onClick={(e) => { e.stopPropagation(); handlePrint(conv); }} 
                       className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer" 
                       title="Imprimer convocation prof"
@@ -858,6 +999,13 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-200 transition-colors cursor-pointer"
                 >
                   <Edit3 className="w-3.5 h-3.5" /> Modifier
+                </button>
+                <button 
+                  onClick={() => handleDownloadConvocation(activeConvocation)} 
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer shadow-xs"
+                  title="Télécharger la convocation officielle (document autonome complet avec AP, Droit Image et Savoir Nager)"
+                >
+                  <Download className="w-3.5 h-3.5" /> Télécharger
                 </button>
                 <button 
                   onClick={() => handlePrintEleves(activeConvocation)} 
@@ -1049,8 +1197,9 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                         <th className="p-2.5 text-center">Classe</th>
                         <th className="p-2.5 text-center">N° Licence</th>
                         <th className="p-2.5 text-center">Catégorie</th>
-                        <th className="p-2.5 text-center">AP</th>
-                        <th className="p-2.5 text-center">Nage</th>
+                        <th className="p-2.5 text-center">Auto. Parentale</th>
+                        <th className="p-2.5 text-center">Droit Image</th>
+                        <th className="p-2.5 text-center">Savoir Nager</th>
                         <th className="p-2.5 text-center">Cotisation</th>
                         <th className="p-2.5 text-center">Taille</th>
                       </tr>
@@ -1082,16 +1231,23 @@ export const ConvocationManager: React.FC<Props> = ({ students, activeYear, auto
                             </td>
                             <td className="p-2.5 text-center">
                               {s.parentalAuth === 'OUI' ? (
-                                <span className="text-emerald-700 font-bold">✓</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Validée</span>
                               ) : (
-                                <span className="text-rose-500 font-bold">✗</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">✗ Manquante</span>
+                              )}
+                            </td>
+                            <td className="p-2.5 text-center">
+                              {s.imageRights === 'OUI' ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ Validé</span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">✗ Refusé</span>
                               )}
                             </td>
                             <td className="p-2.5 text-center">
                               {s.swimmingCertificate === 'OUI' ? (
-                                <span className="text-emerald-700 font-bold">✓</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">✓ Validé</span>
                               ) : (
-                                <span className="text-slate-400">✗</span>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">✗ Non validé</span>
                               )}
                             </td>
                             <td className="p-2.5 text-center">
