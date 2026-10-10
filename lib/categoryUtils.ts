@@ -13,13 +13,13 @@ export const AVAILABLE_CONVOCATION_CRITERIA: ConvocationCriterion[] = [
   { id: 'classGroup', label: 'Classe', defaultChecked: true },
   { id: 'licenseNumber', label: 'N° Licence', defaultChecked: true },
   { id: 'category', label: 'Catégorie (BF/BG, MF/MG...)', defaultChecked: true },
+  { id: 'parentalAuth', label: 'Autorisation parentale (AP)', defaultChecked: true },
+  { id: 'imageRights', label: 'Droit à l\'image', defaultChecked: true },
+  { id: 'swimmingCertificate', label: 'Savoir nager', defaultChecked: true },
   { id: 'birthDate', label: 'Date de naissance', defaultChecked: false },
   { id: 'gender', label: 'Sexe (F/G)', defaultChecked: false },
-  { id: 'parentalAuth', label: 'Autorisation parentale (AP)', defaultChecked: true },
-  { id: 'swimmingCertificate', label: 'Savoir nager', defaultChecked: false },
   { id: 'paid', label: 'Cotisation réglée (€)', defaultChecked: false },
   { id: 'size', label: 'Taille maillot', defaultChecked: false },
-  { id: 'imageRights', label: 'Droit image', defaultChecked: false },
   { id: 'signature', label: 'Émargement / Signature', defaultChecked: true },
 ];
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Student, ColumnDefinition } from '../types';
-import { Trash2, ArrowRightLeft, CalendarDays } from 'lucide-react';
+import { Trash2, ArrowRightLeft, CalendarDays, CheckCircle2, XCircle } from 'lucide-react';
 import { formatDateFr, normalizeGender } from '../lib/utils';
 
 export interface StudentTableProps {
@@ -123,6 +123,42 @@ export const StudentTable: React.FC<StudentTableProps> = ({
                              onClick={(e) => e.stopPropagation()}
                              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
                            />
+                        ) : col.key === 'parentalAuth' ? (
+                          String(student.parentalAuth).toUpperCase() === 'OUI' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>Validée</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 shadow-2xs">
+                              <XCircle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                              <span>Manquante</span>
+                            </span>
+                          )
+                        ) : col.key === 'imageRights' ? (
+                          String(student.imageRights).toUpperCase() === 'OUI' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span>Validé</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs">
+                              <XCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              <span>Refusé</span>
+                            </span>
+                          )
+                        ) : col.key === 'swimmingCertificate' ? (
+                          String(student.swimmingCertificate).toUpperCase() === 'OUI' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-sky-50 text-sky-700 border border-sky-200 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                              <span>Validé</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              <XCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>Non validé</span>
+                            </span>
+                          )
                         ) : col.key === 'gender' ? (
                           (() => {
                             const g = normalizeGender(student.gender);
