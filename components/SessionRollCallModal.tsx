@@ -951,10 +951,18 @@ export const SessionRollCallModal: React.FC<Props> = ({
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium mt-0.5">
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium mt-0.5 flex-wrap">
                             <span>AP: {isAuth ? '✓' : '✗'}</span>
                             <span>•</span>
                             <span>Cotisation: {isPaid ? '✓' : '✗'}</span>
+                            {currentSession.waitlistConsents?.[studentId]?.acceptAutoReschedule && (
+                              <>
+                                <span>•</span>
+                                <span className="bg-purple-100 text-purple-800 font-bold px-1.5 py-0.2 rounded border border-purple-200">
+                                  ✓ Report accepté
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>

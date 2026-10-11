@@ -374,9 +374,20 @@ export const GenerateSessionFromWaitlistModal: React.FC<GenerateSessionFromWaitl
                           <span className="font-bold text-slate-900 block truncate">
                             {st.lastName} {st.firstName}
                           </span>
-                          <span className="text-[10px] text-slate-500">
-                            {st.classGroup || 'Classe non renseignée'}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-slate-500">
+                              {st.classGroup || 'Classe non renseignée'}
+                            </span>
+                            {session.waitlistConsents?.[st.id]?.acceptAutoReschedule ? (
+                              <span className="text-[9px] font-black text-purple-700 bg-purple-100 px-1.5 py-0.2 rounded border border-purple-200">
+                                Accord report ✓
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
+                                Liste d'attente
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 

@@ -30,6 +30,9 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const [lastWaitlistedStudent, setLastWaitlistedStudent] = useState<PublicStudent | null>(null);
   const [waitlistSearchTerm, setWaitlistSearchTerm] = useState('');
   const [isJoiningWaitlist, setIsJoiningWaitlist] = useState(false);
+  // Cases à cocher pour acceptation de la liste d'attente et report automatique
+  const [acceptWaitlistConsent, setAcceptWaitlistConsent] = useState(true);
+  const [acceptAutoRescheduleConsent, setAcceptAutoRescheduleConsent] = useState(true);
 
   // Pour inscription en équipe
   const [teamName, setTeamName] = useState('');
@@ -220,14 +223,31 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
       return;
     }
 
+    if (!acceptWaitlistConsent) {
+      alert("Veuillez cocher la case acceptant l'inscription sur la liste d'attente.");
+      return;
+    }
+
     setEnrollingId(student.id);
     setIsJoiningWaitlist(true);
     try {
-      await joinSessionWaitlistApi(session.id, student.id);
+      await joinSessionWaitlistApi(session.id, student.id, {
+        acceptWaitlist: acceptWaitlistConsent,
+        acceptAutoReschedule: acceptAutoRescheduleConsent
+      });
       const updatedWaitlist = Array.from(new Set([...(session.waitlistStudentIds || []), student.id]));
+      const updatedConsents = { 
+        ...(session.waitlistConsents || {}),
+        [student.id]: {
+          acceptWaitlist: acceptWaitlistConsent,
+          acceptAutoReschedule: acceptAutoRescheduleConsent,
+          date: new Date().toISOString()
+        }
+      };
       setSession({
         ...session,
-        waitlistStudentIds: updatedWaitlist
+        waitlistStudentIds: updatedWaitlist,
+        waitlistConsents: updatedConsents
       });
       setLastWaitlistedStudent(student);
       setWaitlistSearchTerm('');
@@ -653,7 +673,40 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                 )}
 
                 {/* Champ de recherche pour rejoindre la liste d'attente */}
-                <div className="space-y-2 bg-white p-3.5 sm:p-4 rounded-xl border border-purple-200">
+                <div className="space-y-3 bg-white p-3.5 sm:p-4 rounded-xl border border-purple-200">
+                  {/* CASES À COCHER OBLIGATOIRE ET OPTIONNELLE BIEN VISIBLES */}
+                  <div className="bg-purple-50/70 p-3 sm:p-3.5 rounded-xl border border-purple-200/90 space-y-2.5">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-purple-950 block">
+                      Conditions de prise en compte :
+                    </span>
+                    
+                    {/* 1. Case à cocher : Inscription sur liste d'attente */}
+                    <label className="flex items-start gap-2.5 cursor-pointer text-xs group select-none">
+                      <input
+                        type="checkbox"
+                        checked={acceptWaitlistConsent}
+                        onChange={e => setAcceptWaitlistConsent(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 text-purple-600 rounded border-purple-300 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span className="font-bold text-slate-800 leading-snug">
+                        J'accepte d'être placé(e) sur la liste d'attente et d'être rappelé(e) prioritairement en cas de désistement.
+                      </span>
+                    </label>
+
+                    {/* 2. Case à cocher : Report automatique sur une autre séance */}
+                    <label className="flex items-start gap-2.5 cursor-pointer text-xs group select-none">
+                      <input
+                        type="checkbox"
+                        checked={acceptAutoRescheduleConsent}
+                        onChange={e => setAcceptAutoRescheduleConsent(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 text-purple-600 rounded border-purple-300 focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span className="font-semibold text-purple-950 leading-snug">
+                        <strong className="font-black text-purple-900">Report automatique :</strong> J'accepte d'être automatiquement inscrit(e) si un nouveau créneau ou une séance supplémentaire est ouvert(e) par l'enseignant sur un autre jour.
+                      </span>
+                    </label>
+                  </div>
+
                   <label className="text-xs font-black text-slate-800 uppercase tracking-wide block">
                     Rechercher ton nom pour t'inscrire sur la liste d'attente :
                   </label>
@@ -1041,6 +1094,23 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                         </button>
                       )}
                     </div>
+
+                    {/* OPTION DE REPORT AUTOMATIQUE / LISTE D'ATTENTE LORS DE L'INSCRIPTION */}
+                    {session.maxParticipants !== undefined && session.maxParticipants > 0 && (
+                      <div className="mt-3 pt-3 border-t border-indigo-200/80 space-y-2">
+                        <label className="flex items-start gap-2.5 cursor-pointer text-xs group select-none">
+                          <input
+                            type="checkbox"
+                            checked={acceptAutoRescheduleConsent}
+                            onChange={e => setAcceptAutoRescheduleConsent(e.target.checked)}
+                            className="mt-0.5 w-4 h-4 text-indigo-600 rounded border-indigo-300 focus:ring-indigo-500 cursor-pointer"
+                          />
+                          <span className="text-slate-800 leading-snug">
+                            <strong className="font-bold text-indigo-950">Accepter le report automatique :</strong> Si cette séance est complète ou reportée, j'accepte d'être placé(e) sur la liste d'attente prioritaire ou réinscrit(e) d'office sur un nouveau créneau ouvert sur un autre jour.
+                          </span>
+                        </label>
+                      </div>
+                    )}
 
                     {searchTerm.trim().length === 0 ? (
                       <p className="text-xs text-slate-500 font-medium mt-2 flex items-center gap-1.5">
