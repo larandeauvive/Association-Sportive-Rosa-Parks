@@ -1178,15 +1178,31 @@ export const deleteTeamFromSession = async (
 };
 
 /**
- * Inscription d'un élève sur la liste d'attente d'une séance complète
+ * Inscription d'un élève sur la liste d'attente d'une séance complète avec options de consentement
  */
-export const joinSessionWaitlistApi = async (sessionId: string, studentId: string): Promise<void> => {
+export const joinSessionWaitlistApi = async (
+  sessionId: string, 
+  studentId: string,
+  consents?: { acceptWaitlist?: boolean; acceptAutoReschedule?: boolean }
+): Promise<void> => {
   const localSessions = getLocalSessions();
   const localSes = localSessions.find(s => s.id === sessionId);
 
+  const consentRecord = {
+    acceptWaitlist: consents?.acceptWaitlist !== false,
+    acceptAutoReschedule: !!consents?.acceptAutoReschedule,
+    date: new Date().toISOString()
+  };
+
   if (localSes) {
     const waitlist = Array.from(new Set([...(localSes.waitlistStudentIds || []), studentId]));
-    saveLocalSession({ ...localSes, waitlistStudentIds: waitlist });
+    const localConsents = { ...(localSes.waitlistConsents || {}) };
+    localConsents[studentId] = consentRecord;
+    saveLocalSession({ 
+      ...localSes, 
+      waitlistStudentIds: waitlist,
+      waitlistConsents: localConsents
+    });
   }
 
   // Firestore
@@ -1197,9 +1213,13 @@ export const joinSessionWaitlistApi = async (sessionId: string, studentId: strin
       const sData = sDocSnap.data();
       const currentWaitlist: string[] = sData.waitlist_student_ids || sData.waitlistStudentIds || [];
       const updatedWaitlist = Array.from(new Set([...currentWaitlist, studentId]));
+      const fsConsents = { ...(sData.waitlist_consents || sData.waitlistConsents || {}) };
+      fsConsents[studentId] = consentRecord;
       await setDoc(sDocRef, {
         waitlist_student_ids: updatedWaitlist,
-        waitlistStudentIds: updatedWaitlist
+        waitlistStudentIds: updatedWaitlist,
+        waitlist_consents: fsConsents,
+        waitlistConsents: fsConsents
       }, { merge: true });
     }
   } catch (fsErr) {
@@ -1212,7 +1232,7 @@ export const joinSessionWaitlistApi = async (sessionId: string, studentId: strin
     try {
       await fetchJson(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/waitlist`, {
         method: 'POST',
-        body: JSON.stringify({ studentId })
+        body: JSON.stringify({ studentId, consents: consentRecord })
       });
     } catch {
       // ok
@@ -1224,15 +1244,19 @@ export const joinSessionWaitlistApi = async (sessionId: string, studentId: strin
     try {
       const { data: currentSession } = await supabase
         .from('sessions')
-        .select('waitlist_student_ids')
+        .select('waitlist_student_ids, waitlist_consents')
         .eq('id', sessionId)
         .single();
       if (currentSession) {
         const list: string[] = currentSession.waitlist_student_ids || [];
         if (!list.includes(studentId)) {
           list.push(studentId);
-          await supabase.from('sessions').update({ waitlist_student_ids: list }).eq('id', sessionId);
         }
+        const updatedConsents = { ...(currentSession.waitlist_consents || {}), [studentId]: consentRecord };
+        await supabase.from('sessions').update({ 
+          waitlist_student_ids: list,
+          waitlist_consents: updatedConsents 
+        }).eq('id', sessionId);
       }
     } catch {
       // ok

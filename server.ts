@@ -515,14 +515,21 @@ async function startServer() {
   // Waitlist endpoints
   app.post('/api/sessions/:id/waitlist', async (req, res) => {
     try {
-      const { studentId } = req.body;
+      const { studentId, consents } = req.body;
       if (!studentId) return res.status(400).json({ error: 'Identifiant élève manquant' });
 
       const session = await getSessionById(req.params.id);
       if (!session) return res.status(404).json({ error: 'Séance non trouvée' });
 
       const waitlist = Array.from(new Set([...(session.waitlistStudentIds || []), studentId]));
-      await updateSessionById(req.params.id, { waitlistStudentIds: waitlist });
+      const waitlistConsents = { ...(session.waitlistConsents || {}) };
+      if (consents) {
+        waitlistConsents[studentId] = consents;
+      }
+      await updateSessionById(req.params.id, { 
+        waitlistStudentIds: waitlist,
+        waitlistConsents
+      });
       res.json({ success: true, waitlist });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

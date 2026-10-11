@@ -855,7 +855,8 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         directRegistrationTeacherId: formData.blockOnlineRegistration ? formData.directRegistrationTeacherId : undefined,
         directRegistrationTeacherName: formData.blockOnlineRegistration ? formData.directRegistrationTeacherName : undefined,
         directRegistrationNotice: formData.blockOnlineRegistration ? formData.directRegistrationNotice : undefined,
-        attachedPdf: formData.attachedPdf !== undefined ? formData.attachedPdf : null
+        attachedPdf: formData.attachedPdf !== undefined ? formData.attachedPdf : null,
+        enableWaitlist: formData.enableWaitlist !== false
       };
 
       if (formData.id) {
@@ -2843,6 +2844,17 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                     onChange={e => setFormData({...formData, maxParticipants: e.target.value ? parseInt(e.target.value) : undefined})}
                     placeholder="Laisser vide pour illimité"
                   />
+                  {formData.maxParticipants !== undefined && formData.maxParticipants > 0 && (
+                    <label className="flex items-center gap-2 mt-2 text-xs font-bold text-purple-900 cursor-pointer bg-purple-50 p-2 rounded-lg border border-purple-200">
+                      <input
+                        type="checkbox"
+                        checked={formData.enableWaitlist !== false}
+                        onChange={e => setFormData({ ...formData, enableWaitlist: e.target.checked })}
+                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500 cursor-pointer"
+                      />
+                      <span>Accepter la liste d'attente lorsque la séance est complète</span>
+                    </label>
+                  )}
                 </div>
 
                 <div>
