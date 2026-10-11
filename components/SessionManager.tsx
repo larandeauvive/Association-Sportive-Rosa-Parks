@@ -19,7 +19,8 @@ import {
 import { 
   getSeriesSessions, getFutureSeriesSessions, 
   formatRegistrationRule, getSessionRegistrationStatus,
-  getSessionCategory, getSessionDayName, SessionCategory
+  getSessionCategory, getSessionDayName, SessionCategory,
+  checkUnexcusedAbsencePenalty
 } from '../lib/sessionUtils';
 
 interface SessionManagerProps {
@@ -1015,6 +1016,17 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
           if (!proceed) return;
         }
       }
+
+      // Contrôle de la suspension d'assiduité (absence mardi soir ou jeudi précédent)
+      const penaltyCheck = checkUnexcusedAbsencePenalty(target, studentId, sessions);
+      if (penaltyCheck.isBlocked) {
+        const student = students.find(s => s.id === studentId);
+        const proceed = confirm(
+          `⚠️ Suspension d'inscription pour la semaine suivante :\n\n${student ? student.firstName + ' ' + student.lastName : 'Cet élève'} a été noté(e) absent(e) sans justification lors de la séance précédente du mardi soir ou jeudi.\n\n${penaltyCheck.reason}\n\nEn tant qu'enseignant / gestionnaire, confirmez-vous son inscription exceptionnelle ?`
+        );
+        if (!proceed) return;
+      }
+
       enrolled.add(studentId);
     }
     

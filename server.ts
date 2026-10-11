@@ -44,6 +44,7 @@ import {
   getFullDatabaseBackup,
   restoreDatabaseBackup
 } from './src/db/queries.ts';
+import { checkUnexcusedAbsencePenalty } from './lib/sessionUtils.ts';
 
 dotenv.config();
 
@@ -448,6 +449,13 @@ async function startServer() {
         return res.status(400).json({ error: 'La séance est complète.' });
       }
 
+      // Contrôle de l'assiduité AS : absence non excusée sur un créneau mardi soir/jeudi précédent
+      const allSessions = await getSessions(session.schoolYear || undefined);
+      const penaltyCheck = checkUnexcusedAbsencePenalty(session, studentId, allSessions);
+      if (penaltyCheck.isBlocked) {
+        return res.status(400).json({ error: penaltyCheck.reason });
+      }
+
       // Vérification rigoureuse des critères d'inscription
       const student = await getStudentById(studentId);
       if (student) {
@@ -521,6 +529,13 @@ async function startServer() {
       const session = await getSessionById(req.params.id);
       if (!session) return res.status(404).json({ error: 'Séance non trouvée' });
 
+      // Contrôle de l'assiduité AS : absence non excusée sur un créneau mardi soir/jeudi précédent
+      const allSessions = await getSessions(session.schoolYear || undefined);
+      const penaltyCheck = checkUnexcusedAbsencePenalty(session, studentId, allSessions);
+      if (penaltyCheck.isBlocked) {
+        return res.status(400).json({ error: penaltyCheck.reason });
+      }
+
       const waitlist = Array.from(new Set([...(session.waitlistStudentIds || []), studentId]));
       const waitlistConsents = { ...(session.waitlistConsents || {}) };
       if (consents) {
@@ -556,9 +571,19 @@ async function startServer() {
       const session = await getSessionById(req.params.id);
       if (!session) return res.status(404).json({ error: 'Séance non trouvée' });
 
-      // Vérifier les critères pour chaque membre de l'équipe
+      const allSessions = await getSessions(session.schoolYear || undefined);
+
+      // Vérifier les critères et l'absence non justifiée pour chaque membre de l'équipe
       const memberIds: string[] = team?.studentIds || [];
       for (const mId of memberIds) {
+        const penaltyCheck = checkUnexcusedAbsencePenalty(session, mId, allSessions);
+        if (penaltyCheck.isBlocked) {
+          const student = await getStudentById(mId);
+          return res.status(400).json({ 
+            error: `Inscription de l'équipe impossible : ${student ? student.firstName + ' ' + student.lastName : 'Un élève'} est suspendu(e) d'inscription cette semaine suite à une absence sur un créneau du mardi soir ou jeudi.` 
+          });
+        }
+
         const student = await getStudentById(mId);
         if (student) {
           if (session.requirePaid && String(student.paid).toUpperCase() !== 'OUI') {

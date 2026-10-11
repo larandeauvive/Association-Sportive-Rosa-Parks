@@ -300,3 +300,145 @@ export function getSessionDayName(dateStr?: string): string {
   const days = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
   return days[d.getDay()] || '';
 }
+
+export interface AbsencePenaltyResult {
+  isBlocked: boolean;
+  reason?: string;
+  penalizingSession?: Session;
+  penaltyDateFr?: string;
+  dayName?: string;
+}
+
+/**
+ * Calcule le lundi (00:00:00) de la semaine civile contenant la date donnée (format YYYY-MM-DD).
+ */
+export function getMondayOfWeek(dateStr: string): Date {
+  const parts = dateStr.split('-');
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10) - 1;
+  const d = parseInt(parts[2], 10);
+  const date = new Date(y, m, d);
+  const day = date.getDay(); // 0: Dim, 1: Lun, 2: Mar, 3: Mer, 4: Jeu, 5: Ven, 6: Sam
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(y, m, d + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+/**
+ * Détermine si une séance a lieu un mardi (soir) ou un jeudi.
+ */
+export function isTuesdayOrThursdaySession(session: Partial<Session>): boolean {
+  if (!session.date) {
+    if (session.name && /mardi|jeudi|muscu|sport co|soir/i.test(session.name)) return true;
+    return false;
+  }
+  const parts = session.date.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const dateObj = new Date(y, m, d);
+    const day = dateObj.getDay();
+    // 2 = Mardi, 4 = Jeudi
+    if (day === 2 || day === 4) return true;
+  }
+  if (session.name && /mardi|jeudi|muscu|sport co|soir/i.test(session.name)) return true;
+  return false;
+}
+
+/**
+ * Vérifie si un élève est sous le coup d'une suspension d'inscription pour la semaine suivante
+ * suite à une absence non pointée (inscrit mais non présent) lors d'une séance du mardi soir ou du jeudi.
+ *
+ * Règle demandée :
+ * Si un élève inscrit sur une séance du mardi soir (ou du jeudi) est absent (non pointé présent et non excusé),
+ * son inscription la semaine suivante (semaine civile N+1) est impossible.
+ */
+export function checkUnexcusedAbsencePenalty(
+  targetSession: Session,
+  studentId: string,
+  allSessions: Session[]
+): AbsencePenaltyResult {
+  if (!targetSession.date) {
+    return { isBlocked: false };
+  }
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const mondayTarget = getMondayOfWeek(targetSession.date);
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+
+  for (const pastSession of allSessions) {
+    if (!pastSession.date || pastSession.id === targetSession.id) continue;
+    if (pastSession.schoolYear && targetSession.schoolYear && pastSession.schoolYear !== targetSession.schoolYear) continue;
+
+    // Doit être un créneau du mardi (soir) ou du jeudi
+    if (!isTuesdayOrThursdaySession(pastSession)) continue;
+
+    // Doit être antérieure à targetSession et ne pas être dans le futur
+    if (pastSession.date >= targetSession.date) continue;
+    if (pastSession.date > todayStr) continue;
+
+    // Calcul de l'écart exact en semaines civiles entre les lundis
+    const mondayPast = getMondayOfWeek(pastSession.date);
+    const diffWeeks = Math.round((mondayTarget.getTime() - mondayPast.getTime()) / msPerWeek);
+
+    // La règle bloque rigoureusement l'inscription la semaine suivante (exactement diffWeeks === 1)
+    if (diffWeeks !== 1) continue;
+
+    const enrolledIds = pastSession.enrolledStudentIds || [];
+    const presentIds = pastSession.presentStudentIds || [];
+    const excusedIds = pastSession.excusedStudentIds || [];
+
+    const wasEnrolled = enrolledIds.includes(studentId);
+    const wasPresent = presentIds.includes(studentId);
+    const wasExcused = excusedIds.includes(studentId);
+
+    // L'appel doit avoir eu lieu (au moins un élève présent, ou date déjà passée avec inscrits)
+    const rollCallConducted = presentIds.length > 0 || (pastSession.date < todayStr && enrolledIds.length > 0);
+
+    if (wasEnrolled && !wasPresent && !wasExcused && rollCallConducted) {
+      const dayName = getSessionDayName(pastSession.date);
+      const dateFr = new Date(pastSession.date + 'T00:00:00').toLocaleDateString('fr-FR', {
+        day: 'numeric',
+        month: 'long'
+      });
+
+      return {
+        isBlocked: true,
+        reason: `Inscription impossible pour la semaine suivante : élève noté(e) absent(e) lors de la séance du ${dayName} ${dateFr} (${pastSession.name || 'Séance'}). Conformément au règlement de l'AS, toute absence non justifiée sur un créneau du mardi soir ou du jeudi entraîne la suspension des inscriptions pour la semaine suivante.`,
+        penalizingSession: pastSession,
+        penaltyDateFr: dateFr,
+        dayName
+      };
+    }
+  }
+
+  return { isBlocked: false };
+}
+
+/**
+ * Vérifie si un élève est sous le coup d'une suspension d'inscription pour la semaine en cours.
+ */
+export function isStudentSuspendedThisWeek(
+  studentId: string,
+  allSessions: Session[],
+  refDateStr?: string
+): AbsencePenaltyResult {
+  const now = new Date();
+  const dateStr = refDateStr || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  
+  const dummySession: Session = {
+    id: '__current_week_check__',
+    name: 'Vérification semaine',
+    date: dateStr,
+    time: '17:00',
+    schoolYear: '',
+    requireLicense: false,
+    enrolledStudentIds: [],
+    presentStudentIds: []
+  };
+
+  return checkUnexcusedAbsencePenalty(dummySession, studentId, allSessions);
+}

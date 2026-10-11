@@ -10,9 +10,12 @@ import {
 import { 
   getSession, getPublicDirectory, enrollInSession, 
   enrollTeamInSession, addStudent, joinSessionWaitlistApi, 
-  leaveSessionWaitlistApi 
+  leaveSessionWaitlistApi, getSessionsList 
 } from '../lib/db';
-import { getSessionRegistrationStatus, formatRegistrationRule, getSessionCategory } from '../lib/sessionUtils';
+import { 
+  getSessionRegistrationStatus, formatRegistrationRule, getSessionCategory,
+  checkUnexcusedAbsencePenalty, AbsencePenaltyResult 
+} from '../lib/sessionUtils';
 
 interface PublicEnrollmentProps {
   sessionId: string;
@@ -21,6 +24,7 @@ interface PublicEnrollmentProps {
 
 export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const [session, setSession] = useState<Session | null>(null);
+  const [allSessions, setAllSessions] = useState<Session[]>([]);
   const [students, setStudents] = useState<PublicStudent[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -90,8 +94,12 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
       }
       setSession(sessionData);
 
-      const studentsList = await getPublicDirectory(sessionData.schoolYear);
+      const [studentsList, allSessionsList] = await Promise.all([
+        getPublicDirectory(sessionData.schoolYear),
+        getSessionsList(sessionData.schoolYear).catch(() => [])
+      ]);
       setStudents(studentsList);
+      setAllSessions(allSessionsList);
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -160,6 +168,13 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
       return;
     }
 
+    // Contrôle d'assiduité AS du soir (Mardi/Jeudi) : absence non justifiée la semaine précédente
+    const penaltyCheck = checkUnexcusedAbsencePenalty(session, student.id, allSessions);
+    if (penaltyCheck.isBlocked) {
+      alert(`⚠️ Inscription impossible cette semaine pour ${student.firstName} ${student.lastName} :\n\n${penaltyCheck.reason}`);
+      return;
+    }
+
     const missing = getStudentMissingRequirements(student);
     if (missing.length > 0) {
       alert(`Inscription impossible pour ${student.firstName} ${student.lastName} :\nCritères obligatoires manquants : ${missing.join(', ')}.\nVeuillez régulariser votre dossier auprès de votre enseignant d'EPS.`);
@@ -214,6 +229,13 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
     const currentEnrolled = new Set(session.enrolledStudentIds || []);
     if (currentEnrolled.has(student.id)) {
       alert(`${student.firstName} ${student.lastName} est déjà inscrit(e) à cette séance.`);
+      return;
+    }
+
+    // Contrôle d'assiduité AS du soir (Mardi/Jeudi) : absence non justifiée la semaine précédente
+    const penaltyCheck = checkUnexcusedAbsencePenalty(session, student.id, allSessions);
+    if (penaltyCheck.isBlocked) {
+      alert(`⚠️ Inscription sur liste d'attente impossible cette semaine pour ${student.firstName} ${student.lastName} :\n\n${penaltyCheck.reason}`);
       return;
     }
 
@@ -356,6 +378,14 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
   const handleValidateTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !teamName.trim() || selectedTeamStudents.length !== (session.teamSize || 4)) return;
+
+    for (const member of selectedTeamStudents) {
+      const penalty = checkUnexcusedAbsencePenalty(session, member.id, allSessions);
+      if (penalty.isBlocked) {
+        alert(`⚠️ Inscription impossible pour l'équipe :\n\n${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée sur un créneau du mardi soir ou jeudi.\n\n${penalty.reason}`);
+        return;
+      }
+    }
 
     setIsSubmittingTeam(true);
     try {
@@ -739,6 +769,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                           const isAlreadyWaitlisted = (session.waitlistStudentIds || []).includes(st.id);
                           const waitlistPos = (session.waitlistStudentIds || []).indexOf(st.id) + 1;
                           const missingReqs = getStudentMissingRequirements(st);
+                          const penalty = checkUnexcusedAbsencePenalty(session, st.id, allSessions);
 
                           return (
                             <div 
@@ -749,9 +780,16 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                 <span className="font-bold text-slate-900 block truncate">
                                   {st.lastName} {st.firstName}
                                 </span>
-                                <span className="text-[10px] text-slate-500">
-                                  {st.classGroup || 'Classe non renseignée'}
-                                </span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] text-slate-500">
+                                    {st.classGroup || 'Classe non renseignée'}
+                                  </span>
+                                  {penalty.isBlocked && (
+                                    <span className="text-[9px] font-black bg-rose-600 text-white px-1.5 py-0.2 rounded" title={penalty.reason}>
+                                      Suspendu ⛔
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               <div className="shrink-0">
@@ -773,6 +811,15 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                       ✕
                                     </button>
                                   </div>
+                                ) : penalty.isBlocked ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => alert(`⚠️ Inscription impossible pour ${st.firstName} ${st.lastName} :\n\n${penalty.reason}`)}
+                                    className="text-[10px] font-bold text-rose-800 bg-rose-100 border border-rose-300 px-2.5 py-1 rounded-lg cursor-pointer"
+                                    title={penalty.reason}
+                                  >
+                                    Suspendu (Absent) ⛔
+                                  </button>
                                 ) : missingReqs.length > 0 ? (
                                   <button
                                     type="button"
@@ -1153,6 +1200,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                           const isTeamSelected = selectedTeamStudents.some(s => s.id === student.id);
                           const missingReqs = getStudentMissingRequirements(student);
                           const hasMissingReqs = missingReqs.length > 0;
+                          const penalty = checkUnexcusedAbsencePenalty(session, student.id, allSessions);
 
                           return (
                             <div
@@ -1162,6 +1210,8 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                   ? 'bg-emerald-50/60 border-emerald-300'
                                   : isTeamSelected
                                   ? 'bg-purple-50/60 border-purple-300'
+                                  : penalty.isBlocked
+                                  ? 'bg-rose-50/90 border-rose-300'
                                   : hasMissingReqs
                                   ? 'bg-slate-50/70 border-slate-200'
                                   : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-xs'
@@ -1175,6 +1225,11 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                   {student.classGroup && (
                                     <span className="bg-slate-100 text-slate-700 text-[11px] font-bold px-2 py-0.5 rounded-md">
                                       {student.classGroup}
+                                    </span>
+                                  )}
+                                  {penalty.isBlocked && (
+                                    <span className="bg-rose-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs animate-pulse" title={penalty.reason}>
+                                      Suspendu cette semaine (Absent non excusé) ⛔
                                     </span>
                                   )}
                                   {session.requirePaid && (
@@ -1238,6 +1293,15 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                     <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg">
                                       Déjà inscrit
                                     </span>
+                                  ) : penalty.isBlocked ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => alert(`⚠️ Inscription impossible pour l'équipe :\n\n${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée le mardi soir ou jeudi.\n\n${penalty.reason}`)}
+                                      className="px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 text-[11px] font-bold rounded-lg cursor-pointer"
+                                      title={penalty.reason}
+                                    >
+                                      Suspendu ⛔
+                                    </button>
                                   ) : hasMissingReqs ? (
                                     <button
                                       type="button"
@@ -1262,6 +1326,15 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                     <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" />
                                     <span>Inscrit(e) ✓</span>
                                   </span>
+                                ) : penalty.isBlocked ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => alert(`⛔ Inscription impossible cette semaine pour ${student.firstName} ${student.lastName} :\n\n${penalty.reason}`)}
+                                    className="inline-flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300 font-black text-xs rounded-xl transition-all shadow-xs cursor-pointer"
+                                    title={penalty.reason}
+                                  >
+                                    <span>Suspendu (Absent S-1) ⛔</span>
+                                  </button>
                                 ) : hasMissingReqs ? (
                                   <button
                                     type="button"

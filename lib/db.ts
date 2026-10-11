@@ -10,6 +10,7 @@ import {
   Student, PublicStudent, Teacher, Convocation, 
   Session, EveningSlot, StaffMember, StaffAttendanceRecord 
 } from '../types';
+import { checkUnexcusedAbsencePenalty } from './sessionUtils';
 import {
   rowToStudent, studentToRow,
   rowToSession, sessionToRow,
@@ -1016,6 +1017,11 @@ export const enrollInSession = async (sessionId: string, studentId: string, surv
   }
 
   if (localSes) {
+    const penaltyCheck = checkUnexcusedAbsencePenalty(localSes, studentId, localSessions);
+    if (penaltyCheck.isBlocked) {
+      throw new Error(penaltyCheck.reason || "Inscription impossible : absence non justifiée sur une séance précédente du mardi soir ou jeudi.");
+    }
+
     const currentEnrolled = Array.from(new Set([...(localSes.enrolledStudentIds || []), studentId]));
     const localResponses = { ...(localSes.surveyResponses || {}) };
     if (surveyResponse !== undefined && surveyResponse !== null) {
@@ -1131,6 +1137,14 @@ export const enrollTeamInSession = async (
     const session = await getSession(sessionId);
     if (!session) throw new Error('Séance introuvable');
 
+    const allSessions = getLocalSessions();
+    for (const memberId of newTeam.studentIds) {
+      const penaltyCheck = checkUnexcusedAbsencePenalty(session, memberId, allSessions);
+      if (penaltyCheck.isBlocked) {
+        throw new Error(penaltyCheck.reason || "Un des membres de l'équipe est suspendu d'inscription la semaine suivante suite à une absence sur un créneau du mardi soir ou jeudi.");
+      }
+    }
+
     const currentEnrolled = new Set(session.enrolledStudentIds || []);
     newTeam.studentIds.forEach(id => currentEnrolled.add(id));
 
@@ -1195,6 +1209,11 @@ export const joinSessionWaitlistApi = async (
   };
 
   if (localSes) {
+    const penaltyCheck = checkUnexcusedAbsencePenalty(localSes, studentId, localSessions);
+    if (penaltyCheck.isBlocked) {
+      throw new Error(penaltyCheck.reason || "Inscription sur liste d'attente impossible : absence non justifiée sur une séance précédente du mardi soir ou jeudi.");
+    }
+
     const waitlist = Array.from(new Set([...(localSes.waitlistStudentIds || []), studentId]));
     const localConsents = { ...(localSes.waitlistConsents || {}) };
     localConsents[studentId] = consentRecord;

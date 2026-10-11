@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Student, Session, Teacher } from '../types';
-import { saveSessionApi, promoteFromWaitlistApi, leaveSessionWaitlistApi, getTeachersList } from '../lib/db';
-import { getSessionDayName, getSessionCategory } from '../lib/sessionUtils';
+import { saveSessionApi, promoteFromWaitlistApi, leaveSessionWaitlistApi, getTeachersList, getSessionsList } from '../lib/db';
+import { getSessionDayName, getSessionCategory, isTuesdayOrThursdaySession, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
 import { GenerateSessionFromWaitlistModal } from './GenerateSessionFromWaitlistModal';
 import { 
   CheckCircle2, Circle, Users, UserCheck, PlusCircle, Search, 
   Printer, Share2, Check, Moon, Zap, Calendar, Clock, X,
-  AlertCircle, Hourglass, Sparkles, UserPlus, Trash2, ArrowUpRight
+  AlertCircle, Hourglass, Sparkles, UserPlus, Trash2, ArrowUpRight,
+  FileCheck2, ShieldAlert
 } from 'lucide-react';
 
 interface Props {
@@ -46,6 +47,12 @@ export const SessionRollCallModal: React.FC<Props> = ({
   // Modal de dédoublement de séance depuis liste d'attente
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [teachersList, setTeachersList] = useState<Teacher[]>(teachersProp || []);
+  const [allSessions, setAllSessions] = useState<Session[]>([]);
+
+  useEffect(() => {
+    if (!isOpen || !activeYear) return;
+    getSessionsList(activeYear).then(list => setAllSessions(list || [])).catch(() => {});
+  }, [isOpen, activeYear]);
 
   useEffect(() => {
     if (teachersProp && teachersProp.length > 0) {
@@ -144,18 +151,22 @@ export const SessionRollCallModal: React.FC<Props> = ({
   // Toggle pointage présence d'un élève
   const handleToggleAttendance = async (studentId: string) => {
     const presentSet = new Set(currentSession.presentStudentIds || []);
+    const excusedSet = new Set(currentSession.excusedStudentIds || []);
     const willBePresent = !presentSet.has(studentId);
 
     if (willBePresent) {
       presentSet.add(studentId);
+      excusedSet.delete(studentId); // Si présent, n'est plus marqué excusé
     } else {
       presentSet.delete(studentId);
     }
 
     const newPresentIds = Array.from(presentSet);
+    const newExcusedIds = Array.from(excusedSet);
     const updated: Session = {
       ...currentSession,
       presentStudentIds: newPresentIds,
+      excusedStudentIds: newExcusedIds,
     };
 
     setCurrentSession(updated);
@@ -171,6 +182,44 @@ export const SessionRollCallModal: React.FC<Props> = ({
     }
   };
 
+  // Basculer l'état excusé d'un élève absent (évite la pénalité d'assiduité S+1)
+  const handleToggleExcused = async (studentId: string) => {
+    const excusedSet = new Set(currentSession.excusedStudentIds || []);
+    const presentSet = new Set(currentSession.presentStudentIds || []);
+    
+    // Si on excuse, l'élève ne peut pas être présent en même temps
+    presentSet.delete(studentId);
+
+    if (excusedSet.has(studentId)) {
+      excusedSet.delete(studentId);
+    } else {
+      excusedSet.add(studentId);
+    }
+
+    const updated: Session = {
+      ...currentSession,
+      presentStudentIds: Array.from(presentSet),
+      excusedStudentIds: Array.from(excusedSet),
+    };
+
+    setCurrentSession(updated);
+    if (onSessionUpdated) onSessionUpdated(updated);
+    setNotification(
+      excusedSet.has(studentId)
+        ? "✉️ Élève marqué excusé (non pénalisé la semaine suivante)."
+        : "Absence injustifiée rétablie (pénalité S+1 active)."
+    );
+
+    try {
+      await saveSessionApi({
+        ...updated,
+        id: updated.id,
+      });
+    } catch (err) {
+      console.error("Erreur sauvegarde excuse:", err);
+    }
+  };
+
   // Pointer tous les inscrits présents
   const handleMarkAllPresent = async () => {
     if (!currentSession.enrolledStudentIds || currentSession.enrolledStudentIds.length === 0) return;
@@ -179,6 +228,7 @@ export const SessionRollCallModal: React.FC<Props> = ({
     const updated: Session = {
       ...currentSession,
       presentStudentIds: allIds,
+      excusedStudentIds: [],
     };
 
     setCurrentSession(updated);
@@ -202,6 +252,7 @@ export const SessionRollCallModal: React.FC<Props> = ({
     const updated: Session = {
       ...currentSession,
       presentStudentIds: [],
+      excusedStudentIds: [],
     };
 
     setCurrentSession(updated);
@@ -220,6 +271,14 @@ export const SessionRollCallModal: React.FC<Props> = ({
 
   // Inscrire et pointer présent directement en 1 clic
   const handleDirectAddAndMarkPresent = async (student: Student) => {
+    const penalty = checkUnexcusedAbsencePenalty(currentSession, student.id, allSessions);
+    if (penalty.isBlocked) {
+      const confirmForce = confirm(
+        `⚠️ Attention : ${student.firstName} ${student.lastName} est sous le coup d'une suspension d'inscription cette semaine :\n\n${penalty.reason}\n\nEn tant qu'enseignant, voulez-vous passer outre et l'inscrire quand même ?`
+      );
+      if (!confirmForce) return;
+    }
+
     const enrolledSet = new Set(currentSession.enrolledStudentIds || []);
     const presentSet = new Set(currentSession.presentStudentIds || []);
 
@@ -693,24 +752,31 @@ export const SessionRollCallModal: React.FC<Props> = ({
 
               {nonEnrolledCandidates.length > 0 && (
                 <div className="bg-white rounded-xl border border-indigo-200 divide-y divide-slate-100 max-h-60 overflow-y-auto shadow-xs">
-                  {nonEnrolledCandidates.map(candidate => (
-                    <div
-                      key={candidate.id}
-                      className="p-3 flex items-center justify-between gap-2.5 hover:bg-indigo-50/50 transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-bold text-slate-900 text-xs sm:text-sm truncate flex items-center gap-2">
-                          <span>{candidate.lastName} {candidate.firstName}</span>
-                          <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold">
-                            {candidate.classGroup || 'Sans classe'}
-                          </span>
+                  {nonEnrolledCandidates.map(candidate => {
+                    const penalty = checkUnexcusedAbsencePenalty(currentSession, candidate.id, allSessions);
+                    return (
+                      <div
+                        key={candidate.id}
+                        className="p-3 flex items-center justify-between gap-2.5 hover:bg-indigo-50/50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 text-xs sm:text-sm truncate flex items-center gap-2 flex-wrap">
+                            <span>{candidate.lastName} {candidate.firstName}</span>
+                            <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-semibold">
+                              {candidate.classGroup || 'Sans classe'}
+                            </span>
+                            {penalty.isBlocked && (
+                              <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded-md font-black shadow-xs animate-pulse" title={penalty.reason}>
+                                Suspendu cette semaine (Absent S-1) ⛔
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold mt-0.5">
+                            <span>AP: {candidate.parentalAuth === 'OUI' ? '✓ Validée' : '✗ Manquante'}</span>
+                            <span>•</span>
+                            <span>Cotisation: {candidate.paid === 'OUI' ? '✓ Payée' : '✗ Non'}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold mt-0.5">
-                          <span>AP: {candidate.parentalAuth === 'OUI' ? '✓ Validée' : '✗ Manquante'}</span>
-                          <span>•</span>
-                          <span>Cotisation: {candidate.paid === 'OUI' ? '✓ Payée' : '✗ Non'}</span>
-                        </div>
-                      </div>
 
                       <button
                         type="button"
@@ -721,8 +787,9 @@ export const SessionRollCallModal: React.FC<Props> = ({
                         <span>Inscrire & Présent ✓</span>
                       </button>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
+              </div>
               )}
 
               {addSearch.trim() && nonEnrolledCandidates.length === 0 && (
@@ -737,6 +804,8 @@ export const SessionRollCallModal: React.FC<Props> = ({
           <div className="space-y-2">
             {enrolledStudents.map(s => {
               const isPresent = (currentSession.presentStudentIds || []).includes(s.id);
+              const isExcused = (currentSession.excusedStudentIds || []).includes(s.id);
+              const isTuesdayOrThursday = isTuesdayOrThursdaySession(currentSession);
               const isAuth = String(s.parentalAuth).toUpperCase() === 'OUI';
               const isImage = String(s.imageRights).toUpperCase() === 'OUI';
               const isSwim = String(s.swimmingCertificate).toUpperCase() === 'OUI';
@@ -749,6 +818,10 @@ export const SessionRollCallModal: React.FC<Props> = ({
                   className={`flex items-center justify-between p-3 sm:p-3.5 rounded-2xl border transition-all cursor-pointer ${
                     isPresent
                       ? 'bg-emerald-50/90 border-emerald-300 shadow-2xs ring-1 ring-emerald-300'
+                      : isExcused
+                      ? 'bg-blue-50/80 border-blue-200'
+                      : isTuesdayOrThursday
+                      ? 'bg-rose-50/60 border-rose-200 hover:border-rose-300'
                       : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
                   }`}
                 >
@@ -756,11 +829,19 @@ export const SessionRollCallModal: React.FC<Props> = ({
                     <div className="min-w-0">
                       <div className="font-black text-slate-900 text-sm sm:text-base flex items-center gap-1.5 flex-wrap leading-tight">
                         <span className="truncate">{s.lastName} {s.firstName}</span>
-                        {isPresent && (
+                        {isPresent ? (
                           <span className="bg-emerald-200 text-emerald-950 text-[10px] font-black px-1.5 py-0.2 rounded uppercase">
                             Présent ✓
                           </span>
-                        )}
+                        ) : isExcused ? (
+                          <span className="bg-blue-100 text-blue-900 border border-blue-200 text-[10px] font-black px-1.5 py-0.2 rounded uppercase">
+                            Excusé ✉️ (Sans pénalité)
+                          </span>
+                        ) : isTuesdayOrThursday ? (
+                          <span className="bg-rose-100 text-rose-900 border border-rose-300 text-[10px] font-black px-1.5 py-0.2 rounded uppercase" title="Absent non excusé : inscription bloquée la semaine suivante">
+                            Absent ⛔ (Bloqué S+1)
+                          </span>
+                        ) : null}
                         <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">
                           {s.classGroup || 'Sans classe'}
                         </span>
@@ -843,6 +924,31 @@ export const SessionRollCallModal: React.FC<Props> = ({
                         </>
                       )}
                     </button>
+
+                    {/* BOUTON MOT / EXCUSÉ POUR ÉVITER LA SUSPENSION S+1 */}
+                    {!isPresent && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleExcused(s.id);
+                        }}
+                        className={`h-11 sm:h-12 px-3 sm:px-4 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-xs ${
+                          isExcused
+                            ? 'bg-blue-600 text-white hover:bg-blue-700 ring-2 ring-blue-400'
+                            : 'bg-white hover:bg-blue-50 text-blue-900 border border-blue-200'
+                        }`}
+                        title={
+                          isExcused
+                            ? "Élève excusé (sans pénalité S+1). Cliquer pour rétablir en absent non excusé."
+                            : "Marquer comme excusé (mot/certificat médical) pour annuler la suspension d'inscription pour la semaine suivante."
+                        }
+                      >
+                        <FileCheck2 className="w-4 h-4 shrink-0" />
+                        <span className="hidden sm:inline">{isExcused ? 'Excusé ✉️' : 'Mot / Excusé'}</span>
+                        <span className="sm:hidden">{isExcused ? 'Excusé' : 'Mot'}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"

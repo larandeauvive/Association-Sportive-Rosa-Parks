@@ -108,6 +108,7 @@ export interface Session {
   schoolYear: string;
   enrolledStudentIds: string[]; // Élèves inscrits
   presentStudentIds: string[]; // Élèves pointés présents
+  excusedStudentIds?: string[]; // Élèves excusés (mot d'absence, certificat médical, non pénalisés)
   waitlistStudentIds?: string[]; // Élèves placés sur liste d'attente lorsque la séance est complète
   waitlistConsents?: Record<string, { acceptWaitlist: boolean; acceptAutoReschedule: boolean; date?: string }>; // Consentements des élèves { [studentId]: { acceptWaitlist, acceptAutoReschedule } }
   enableWaitlist?: boolean; // Activer la liste d'attente sur cette séance (case à cocher côté enseignant)

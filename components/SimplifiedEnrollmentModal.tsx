@@ -6,8 +6,8 @@ import {
   Sparkles, UserCheck, Timer, Lock, Download, FileText, HelpCircle,
   Share2
 } from 'lucide-react';
-import { getPublicDirectory, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
-import { getSessionRegistrationStatus, formatRegistrationRule } from '../lib/sessionUtils';
+import { getPublicDirectory, getSessionsList, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
+import { getSessionRegistrationStatus, formatRegistrationRule, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
 import { formatFileSize } from '../lib/registrationFormHelper';
 
 interface SimplifiedEnrollmentModalProps {
@@ -24,6 +24,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   onSuccess
 }) => {
   const [students, setStudents] = useState<PublicStudent[]>([]);
+  const [allSessions, setAllSessions] = useState<Session[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
   const [enrollingId, setEnrollingId] = useState<string | null>(null);
@@ -83,10 +84,14 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     const loadDirectory = async () => {
       setLoading(true);
       try {
-        const dir = await getPublicDirectory(session.schoolYear);
+        const [dir, sessList] = await Promise.all([
+          getPublicDirectory(session.schoolYear),
+          getSessionsList(session.schoolYear).catch(() => [])
+        ]);
         setStudents(dir);
+        setAllSessions(sessList);
       } catch (err) {
-        console.warn('Erreur chargement répertoire élèves:', err);
+        console.warn('Erreur chargement répertoire élèves / séances:', err);
       } finally {
         setLoading(false);
       }
@@ -159,6 +164,13 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     }
     if (regStatus.notYetOpen) {
       setErrorMessage(`Les inscriptions ne sont pas encore ouvertes (${regStatus.statusLabel}).`);
+      return;
+    }
+
+    // Contrôle d'assiduité AS : absence non justifiée sur séance précédente mardi soir / jeudi
+    const penaltyCheck = checkUnexcusedAbsencePenalty(session, student.id, allSessions);
+    if (penaltyCheck.isBlocked) {
+      setErrorMessage(`⚠️ Inscription impossible cette semaine pour ${student.firstName} ${student.lastName} : ${penaltyCheck.reason}`);
       return;
     }
 
@@ -271,8 +283,14 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     e.preventDefault();
     if (!teamName.trim() || teamMembers.length !== requiredTeamSize) return;
 
-    // Vérifier les critères de chaque coéquipier
+    // Vérifier les critères et l'assiduité de chaque coéquipier
     for (const member of teamMembers) {
+      const penalty = checkUnexcusedAbsencePenalty(session, member.id, allSessions);
+      if (penalty.isBlocked) {
+        setErrorMessage(`⚠️ Inscription d'équipe impossible : ${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée le mardi soir ou jeudi.`);
+        return;
+      }
+
       const missing = getStudentMissingRequirements(member);
       if (missing.length > 0) {
         setErrorMessage(`Inscription d'équipe impossible : ${member.firstName} ${member.lastName} ne remplit pas les critères requis (${missing.join(', ')}).`);
@@ -792,6 +810,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                       const isTeamSelected = teamMembers.some(t => t.id === student.id);
                       const missingReqs = getStudentMissingRequirements(student);
                       const hasMissingReqs = missingReqs.length > 0;
+                      const penalty = checkUnexcusedAbsencePenalty(session, student.id, allSessions);
 
                       return (
                         <div
@@ -801,6 +820,8 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                               ? 'bg-emerald-50/60 border-emerald-300'
                               : isTeamSelected
                               ? 'bg-purple-50/60 border-purple-300'
+                              : penalty.isBlocked
+                              ? 'bg-rose-50/90 border-rose-300'
                               : hasMissingReqs
                               ? 'bg-slate-50/70 border-slate-200'
                               : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-xs'
@@ -814,6 +835,11 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                               {student.classGroup && (
                                 <span className="bg-slate-100 text-slate-700 text-[11px] font-bold px-2 py-0.5 rounded-md">
                                   {student.classGroup}
+                                </span>
+                              )}
+                              {penalty.isBlocked && (
+                                <span className="bg-rose-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md shadow-xs animate-pulse" title={penalty.reason}>
+                                  Suspendu cette semaine (Absent non excusé) ⛔
                                 </span>
                               )}
                               {session.requirePaid && (
@@ -873,6 +899,15 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                                 <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg">
                                   Déjà inscrit
                                 </span>
+                              ) : penalty.isBlocked ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setErrorMessage(`⚠️ Inscription d'équipe impossible : ${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée le mardi soir ou jeudi.\n\n${penalty.reason}`)}
+                                  className="px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 text-[11px] font-bold rounded-lg cursor-pointer"
+                                  title={penalty.reason}
+                                >
+                                  Suspendu ⛔
+                                </button>
                               ) : hasMissingReqs ? (
                                 <button
                                   type="button"
@@ -897,6 +932,15 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                                 <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" />
                                 <span>Inscrit(e) ✓</span>
                               </span>
+                            ) : penalty.isBlocked ? (
+                              <button
+                                type="button"
+                                onClick={() => setErrorMessage(`⛔ Inscription impossible cette semaine pour ${student.firstName} ${student.lastName} :\n\n${penalty.reason}`)}
+                                className="inline-flex items-center gap-1 px-3 py-2 bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300 font-black text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                                title={penalty.reason}
+                              >
+                                <span>Suspendu (Absent S-1) ⛔</span>
+                              </button>
                             ) : hasMissingReqs ? (
                               <button
                                 type="button"

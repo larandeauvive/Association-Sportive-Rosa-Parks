@@ -78,6 +78,7 @@ export function rowToSession(row: any): Session {
     schoolYear: row.school_year ?? row.schoolYear,
     enrolledStudentIds: row.enrolled_student_ids ?? row.enrolledStudentIds ?? [],
     presentStudentIds: row.present_student_ids ?? row.presentStudentIds ?? [],
+    excusedStudentIds: row.excused_student_ids ?? row.excusedStudentIds ?? [],
     waitlistStudentIds: row.waitlist_student_ids ?? row.waitlistStudentIds ?? [],
     waitlistConsents: row.waitlist_consents ?? row.waitlistConsents ?? {},
     enableWaitlist: row.enable_waitlist ?? row.enableWaitlist ?? true,
@@ -125,6 +126,7 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.schoolYear !== undefined) row.school_year = session.schoolYear;
   if (session.enrolledStudentIds !== undefined) row.enrolled_student_ids = session.enrolledStudentIds;
   if (session.presentStudentIds !== undefined) row.present_student_ids = session.presentStudentIds;
+  if (session.excusedStudentIds !== undefined) row.excused_student_ids = session.excusedStudentIds;
   if (session.waitlistStudentIds !== undefined) row.waitlist_student_ids = session.waitlistStudentIds;
   if (session.waitlistConsents !== undefined) row.waitlist_consents = session.waitlistConsents;
   if (session.enableWaitlist !== undefined) row.enable_waitlist = session.enableWaitlist;
