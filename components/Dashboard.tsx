@@ -3,6 +3,7 @@ import { Convocation, Session, Student } from '../types';
 import { Activity, Users, Trophy, TrendingUp, Percent, UserCheck, PieChart, Settings } from 'lucide-react';
 import { getConvocationsList, getSessionsList } from '../lib/db';
 import { normalizeGender } from '../lib/utils';
+import { AttendanceStatsSection } from './AttendanceStatsSection';
 
 interface Props {
   students: Student[];
@@ -199,6 +200,13 @@ export const Dashboard: React.FC<Props> = ({ students, activeYear, onNewConvocat
           </button>
         </div>
       )}
+
+      {/* Statistiques de fréquentation des créneaux AS (Soir global, Mardi soir, Jeudi soir, Mercredi) */}
+      <AttendanceStatsSection
+        sessions={sessions}
+        students={yearStudents}
+        activeYear={activeYear}
+      />
 
       {/* Deux Colonnes : Genre / Mixité & Niveaux */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
