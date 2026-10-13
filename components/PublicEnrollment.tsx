@@ -668,8 +668,8 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                     <h3 className="font-black text-purple-950 text-base sm:text-lg mt-1">
                       Cette séance est complète, rejoins la liste d'attente !
                     </h3>
-                    <p className="text-xs text-purple-800 font-medium leading-relaxed mt-0.5">
-                      En cas de désistement ou si le professeur d'EPS ouvre une séance supplémentaire sur un autre jour, les élèves en liste d'attente seront prioritaires.
+                    <p className="text-xs text-purple-900 font-bold leading-relaxed mt-0.5">
+                      Tu es sur liste d'attente, si la liste est suffisante, nous ouvrirons un créneau supplémentaire cette semaine.
                     </p>
                   </div>
                 </div>
@@ -689,14 +689,17 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
 
                 {/* Notification de succès d'inscription sur liste d'attente */}
                 {lastWaitlistedStudent && (
-                  <div className="bg-emerald-50 border-2 border-emerald-400 rounded-xl p-3 sm:p-4 flex items-start gap-3 animate-in fade-in zoom-in-95">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 sm:p-4 flex items-start gap-3 animate-in fade-in zoom-in-95 shadow-xs">
+                    <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div className="flex-1 text-xs">
-                      <strong className="text-emerald-950 block font-bold text-sm">
-                        {lastWaitlistedStudent.firstName} est bien inscrit(e) sur la liste d'attente !
+                      <strong className="text-amber-950 block font-black text-sm">
+                        {lastWaitlistedStudent.firstName} {lastWaitlistedStudent.lastName} est sur la liste d'attente !
                       </strong>
-                      <span className="text-emerald-800">
-                        Position n°{(session.waitlistStudentIds || []).indexOf(lastWaitlistedStudent.id) + 1}. Tu seras informé(e) en cas de place disponible ou de création d'une nouvelle séance.
+                      <div className="mt-1 p-2.5 bg-white/95 rounded-lg border border-amber-300 text-amber-950 font-black text-xs">
+                        « Tu es sur liste d'attente, si la liste est suffisante, nous ouvrirons un créneau supplémentaire cette semaine »
+                      </div>
+                      <span className="text-amber-800 text-[11px] font-semibold block mt-1">
+                        Position n°{(session.waitlistStudentIds || []).indexOf(lastWaitlistedStudent.id) + 1}. Tu seras contacté(e) dès qu'un créneau ou une place se libère.
                       </span>
                     </div>
                   </div>

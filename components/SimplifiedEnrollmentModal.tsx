@@ -6,7 +6,10 @@ import {
   Sparkles, UserCheck, Timer, Lock, Download, FileText, HelpCircle,
   Share2
 } from 'lucide-react';
-import { getPublicDirectory, getSessionsList, enrollInSession, enrollTeamInSession, addStudent } from '../lib/db';
+import { 
+  getPublicDirectory, getSessionsList, enrollInSession, 
+  enrollTeamInSession, addStudent, joinSessionWaitlistApi, leaveSessionWaitlistApi 
+} from '../lib/db';
 import { getSessionRegistrationStatus, formatRegistrationRule, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
 import { formatFileSize } from '../lib/registrationFormHelper';
 
@@ -29,8 +32,10 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   const [loading, setLoading] = useState(false);
   const [enrollingId, setEnrollingId] = useState<string | null>(null);
   const [successStudent, setSuccessStudent] = useState<PublicStudent | null>(null);
+  const [waitlistSuccessStudent, setWaitlistSuccessStudent] = useState<PublicStudent | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [enrolledIds, setEnrolledIds] = useState<string[]>([]);
+  const [waitlistIds, setWaitlistIds] = useState<string[]>([]);
   const [copiedLink, setCopiedLink] = useState(false);
 
   const handleShareLink = async () => {
@@ -73,8 +78,10 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     if (!isOpen || !session) return;
     
     setEnrolledIds(session.enrolledStudentIds || []);
+    setWaitlistIds(session.waitlistStudentIds || []);
     setSearchTerm('');
     setSuccessStudent(null);
+    setWaitlistSuccessStudent(null);
     setErrorMessage(null);
     setTeamName('');
     setTeamMembers([]);
@@ -149,7 +156,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
   };
 
   const handleEnroll = async (student: PublicStudent) => {
-    if (!session || isFull || isPast) return;
+    if (!session || isPast) return;
 
     if (session.blockOnlineRegistration) {
       setErrorMessage(session.directRegistrationNotice || (session.directRegistrationTeacherName 
@@ -180,7 +187,35 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
       return;
     }
 
-    // Contrôle du sondage obligatoire
+    // SI LA SÉANCE EST COMPLÈTE -> ORIENTATION DIRECTE VERS LA FILE D'ATTENTE
+    if (isFull) {
+      setEnrollingId(student.id);
+      setErrorMessage(null);
+      try {
+        await joinSessionWaitlistApi(session.id, student.id, {
+          acceptWaitlist: true,
+          acceptAutoReschedule: true
+        });
+
+        const updatedWaitlist = Array.from(new Set([...waitlistIds, student.id]));
+        setWaitlistIds(updatedWaitlist);
+        setWaitlistSuccessStudent(student);
+        setSuccessStudent(null);
+        setSearchTerm('');
+
+        if (onSuccess) {
+          onSuccess();
+        }
+      } catch (err: any) {
+        console.error('Erreur inscription liste d\'attente:', err);
+        setErrorMessage(err?.message || "Impossible d'enregistrer l'inscription sur la liste d'attente.");
+      } finally {
+        setEnrollingId(null);
+      }
+      return;
+    }
+
+    // Contrôle du sondage obligatoire (séance non complète)
     if (session.survey?.enabled && session.survey.required && surveySelection.length === 0) {
       setErrorMessage(`Veuillez répondre au sondage ci-dessus avant de valider votre inscription (« ${session.survey.question || 'Choix option'} »).`);
       return;
@@ -199,6 +234,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
       const updated = Array.from(new Set([...enrolledIds, student.id]));
       setEnrolledIds(updated);
       setSuccessStudent(student);
+      setWaitlistSuccessStudent(null);
       setSearchTerm('');
 
       if (onSuccess) {
@@ -209,6 +245,21 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
       setErrorMessage(err?.message || "Impossible d'enregistrer l'inscription. Réessayez.");
     } finally {
       setEnrollingId(null);
+    }
+  };
+
+  // Se retirer de la liste d'attente
+  const handleLeaveWaitlist = async (studentId: string) => {
+    if (!session) return;
+    try {
+      await leaveSessionWaitlistApi(session.id, studentId);
+      setWaitlistIds(prev => prev.filter(id => id !== studentId));
+      if (waitlistSuccessStudent?.id === studentId) {
+        setWaitlistSuccessStudent(null);
+      }
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      setErrorMessage(err?.message || "Erreur lors du retrait de la liste d'attente.");
     }
   };
 
@@ -226,7 +277,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     }
 
     // Contrôle du sondage obligatoire
-    if (session.survey?.enabled && session.survey.required && surveySelection.length === 0) {
+    if (!isFull && session.survey?.enabled && session.survey.required && surveySelection.length === 0) {
       setErrorMessage(`Veuillez répondre au sondage ci-dessus avant de valider votre inscription (« ${session.survey.question || 'Choix option'} »).`);
       return;
     }
@@ -263,12 +314,25 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
         classGroup: 'Inconnue'
       };
 
-      await enrollInSession(session.id, createdId, surveyResponseValue);
-      
-      setStudents(prev => [newPublic, ...prev]);
-      setEnrolledIds(prev => [...prev, createdId]);
-      setSuccessStudent(newPublic);
-      setSearchTerm('');
+      if (isFull) {
+        await joinSessionWaitlistApi(session.id, createdId, {
+          acceptWaitlist: true,
+          acceptAutoReschedule: true
+        });
+        setStudents(prev => [newPublic, ...prev]);
+        const updatedWaitlist = Array.from(new Set([...waitlistIds, createdId]));
+        setWaitlistIds(updatedWaitlist);
+        setWaitlistSuccessStudent(newPublic);
+        setSuccessStudent(null);
+        setSearchTerm('');
+      } else {
+        await enrollInSession(session.id, createdId, surveyResponseValue);
+        setStudents(prev => [newPublic, ...prev]);
+        setEnrolledIds(prev => [...prev, createdId]);
+        setSuccessStudent(newPublic);
+        setWaitlistSuccessStudent(null);
+        setSearchTerm('');
+      }
 
       if (onSuccess) onSuccess();
     } catch (err: any) {
@@ -348,8 +412,10 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                   {isTeamMode ? '🏆 Inscription Tournoi Équipe' : 'Inscription à la séance'}
                 </span>
                 {isFull ? (
-                  <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                    Complet
+                  <span className="bg-amber-500 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                    <span>Complet</span>
+                    <span>•</span>
+                    <span>File d'attente active</span>
                   </span>
                 ) : isPast ? (
                   <span className="bg-slate-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -502,9 +568,23 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
               </div>
             </div>
           ) : isFull ? (
-            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-center space-y-2">
-              <p className="font-bold text-rose-900 text-sm">Cette séance est actuellement complète.</p>
-              <p className="text-xs text-rose-700">Toutes les places disponibles ont été réservées.</p>
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2 shadow-2xs animate-in fade-in">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 bg-amber-500 text-white font-black text-[10px] sm:text-[11px] rounded-full uppercase tracking-wider shadow-2xs">
+                    Séance complète ({enrolledIds.length}{session.maxParticipants ? `/${session.maxParticipants}` : ''} places)
+                  </span>
+                  <span className="px-2.5 py-0.5 bg-amber-100 text-amber-900 font-bold text-xs rounded-full border border-amber-200">
+                    ⏳ {waitlistIds.length} sur liste d'attente
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-amber-800">
+                  Inscription active sur liste d'attente
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-amber-950 leading-relaxed">
+                ℹ️ Tu peux t'inscrire ci-dessous : <strong>ton inscription te placera sur liste d'attente</strong>. Si la liste est suffisante, nous ouvrirons un créneau supplémentaire cette semaine.
+              </p>
             </div>
           ) : isPast ? (
             <div className="p-4 bg-slate-100 border border-slate-200 rounded-2xl text-center space-y-2">
@@ -513,7 +593,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
             </div>
           ) : null}
 
-          {/* MESSAGE DE SUCCÈS CONFIRMÉ */}
+          {/* MESSAGE DE SUCCÈS CONFIRMÉ : LISTE PRINCIPALE */}
           {successStudent && (
             <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 animate-in fade-in zoom-in-95 duration-200 shadow-sm">
               <div className="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -541,6 +621,55 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                       setTimeout(() => inputRef.current?.focus(), 100);
                     }}
                     className="px-3.5 py-2 bg-white text-emerald-800 hover:bg-emerald-100 text-xs font-bold rounded-xl border border-emerald-300 transition-colors cursor-pointer"
+                  >
+                    Inscrire un autre élève
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MESSAGE DE SUCCÈS CONFIRMÉ : LISTE D'ATTENTE */}
+          {waitlistSuccessStudent && (
+            <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 animate-in fade-in zoom-in-95 duration-200 shadow-sm">
+              <div className="w-10 h-10 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Timer className="w-6 h-6 stroke-[2.5]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 bg-amber-200 text-amber-900 font-extrabold text-[10px] rounded-full uppercase tracking-wide">
+                    Liste d'attente confirmée
+                  </span>
+                  <span className="text-xs font-bold text-amber-800">
+                    Position n°{waitlistIds.indexOf(waitlistSuccessStudent.id) + 1}
+                  </span>
+                </div>
+                <h3 className="text-amber-950 font-black text-base sm:text-lg mt-1">
+                  {waitlistSuccessStudent.firstName} {waitlistSuccessStudent.lastName}
+                </h3>
+                
+                {/* Information demandée : « tu es sur liste d'attente, si la liste est suffisante, nous ouvrirons un créneau supplémentaire cette semaine » */}
+                <div className="mt-2.5 p-3.5 bg-white/95 rounded-xl border-2 border-amber-300 text-amber-950 shadow-2xs">
+                  <p className="text-xs sm:text-sm font-black leading-snug">
+                    « Tu es sur liste d'attente, si la liste est suffisante, nous ouvrirons un créneau supplémentaire cette semaine »
+                  </p>
+                </div>
+
+                <div className="mt-3.5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-black rounded-xl transition-all shadow-xs cursor-pointer"
+                  >
+                    Terminer & Fermer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWaitlistSuccessStudent(null);
+                      setTimeout(() => inputRef.current?.focus(), 100);
+                    }}
+                    className="px-3.5 py-2 bg-white text-amber-900 hover:bg-amber-100 text-xs font-bold rounded-xl border border-amber-300 transition-colors cursor-pointer"
                   >
                     Inscrire un autre élève
                   </button>
@@ -723,19 +852,25 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
           {/* ========================================================================= */}
           {/* SECTION CENTRALE : CASE ULTRA-VISIBLE POUR COMPLÉTER LE NOM DE L'ÉLÈVE   */}
           {/* ========================================================================= */}
-          {!isPast && !isFull && (
+          {!isPast && (
             <div className="space-y-3">
-              <div className="bg-indigo-50/70 p-4 sm:p-5 rounded-2xl border-2 border-indigo-400 shadow-sm focus-within:border-indigo-600 focus-within:ring-4 focus-within:ring-indigo-100 transition-all">
+              <div className={`p-4 sm:p-5 rounded-2xl border-2 shadow-sm transition-all ${
+                isFull 
+                  ? 'bg-amber-50/70 border-amber-400 focus-within:border-amber-600 focus-within:ring-4 focus-within:ring-amber-100'
+                  : 'bg-indigo-50/70 border-indigo-400 focus-within:border-indigo-600 focus-within:ring-4 focus-within:ring-indigo-100'
+              }`}>
                 <label 
                   htmlFor="student-search-input" 
                   className="block text-sm sm:text-base font-black text-slate-900 mb-2 flex items-center justify-between"
                 >
                   <span className="flex items-center gap-2">
-                    <UserCheck className="w-5 h-5 text-indigo-600" />
-                    <span>Nom ou prénom de l'élève à inscrire :</span>
+                    <UserCheck className={`w-5 h-5 ${isFull ? 'text-amber-600' : 'text-indigo-600'}`} />
+                    <span>{isFull ? "Rechercher ton nom pour rejoindre la file d'attente :" : "Nom ou prénom de l'élève à inscrire :"}</span>
                   </span>
-                  <span className="text-[11px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
-                    Étape 1/1
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                    isFull ? 'text-amber-900 bg-amber-200/80 border border-amber-300' : 'text-indigo-700 bg-indigo-100'
+                  }`}>
+                    {isFull ? "File d'attente active" : "Étape 1/1"}
                   </span>
                 </label>
 
@@ -747,12 +882,16 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                     type="text"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
-                    placeholder="Tapez votre nom (ex: Martin, Dupont, Lucas...)"
-                    className="w-full pl-11 pr-10 py-3.5 sm:py-4 bg-white border-2 border-indigo-300 focus:border-indigo-600 rounded-xl text-base sm:text-lg font-black text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:outline-none shadow-inner"
+                    placeholder={isFull ? "Tapez votre nom pour la liste d'attente (ex: Martin, Lucas...)" : "Tapez votre nom (ex: Martin, Dupont, Lucas...)"}
+                    className={`w-full pl-11 pr-10 py-3.5 sm:py-4 bg-white border-2 rounded-xl text-base sm:text-lg font-black text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:outline-none shadow-inner ${
+                      isFull ? 'border-amber-300 focus:border-amber-600' : 'border-indigo-300 focus:border-indigo-600'
+                    }`}
                     autoComplete="off"
                     autoFocus
                   />
-                  <Search className="w-5 h-5 text-indigo-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Search className={`w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none ${
+                    isFull ? 'text-amber-500' : 'text-indigo-500'
+                  }`} />
 
                   {searchTerm.length > 0 && (
                     <button
@@ -771,13 +910,13 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
 
                 {searchTerm.trim().length === 0 ? (
                   <p className="text-xs text-slate-500 font-medium mt-2 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <Sparkles className={`w-3.5 h-3.5 shrink-0 ${isFull ? 'text-amber-600' : 'text-indigo-600'}`} />
                     <span>Tapez au moins 2 lettres de votre nom pour vous trouver instantanément.</span>
                   </p>
                 ) : searchTerm.trim().length === 1 ? (
                   <p className="text-xs text-slate-500 mt-2">Tapez une deuxième lettre...</p>
                 ) : (
-                  <p className="text-xs text-indigo-900 font-bold mt-2">
+                  <p className={`text-xs font-bold mt-2 ${isFull ? 'text-amber-950' : 'text-indigo-900'}`}>
                     {filteredStudents.length} élève(s) trouvé(s) :
                   </p>
                 )}
@@ -798,15 +937,18 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                         type="button"
                         onClick={handleEnrollCustomStudent}
                         disabled={enrollingId === 'custom'}
-                        className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
+                        className={`mt-2 inline-flex items-center gap-2 px-4 py-2 ${
+                          isFull ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                        } text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer`}
                       >
-                        <span>M'inscrire avec le nom « {searchTerm.trim()} »</span>
+                        <span>{isFull ? `M'inscrire sur la liste d'attente comme « ${searchTerm.trim()} »` : `M'inscrire avec le nom « ${searchTerm.trim()} »`}</span>
                         <Check className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ) : (
                     filteredStudents.map(student => {
                       const isEnrolled = enrolledIds.includes(student.id);
+                      const isWaitlisted = waitlistIds.includes(student.id);
                       const isTeamSelected = teamMembers.some(t => t.id === student.id);
                       const missingReqs = getStudentMissingRequirements(student);
                       const hasMissingReqs = missingReqs.length > 0;
@@ -818,12 +960,16 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                           className={`p-3 sm:p-3.5 rounded-xl border-2 transition-all flex items-center justify-between gap-3 ${
                             isEnrolled
                               ? 'bg-emerald-50/60 border-emerald-300'
+                              : isWaitlisted
+                              ? 'bg-amber-50/70 border-amber-300'
                               : isTeamSelected
                               ? 'bg-purple-50/60 border-purple-300'
                               : penalty.isBlocked
                               ? 'bg-rose-50/90 border-rose-300'
                               : hasMissingReqs
                               ? 'bg-slate-50/70 border-slate-200'
+                              : isFull
+                              ? 'bg-white border-amber-200 hover:border-amber-400 hover:shadow-xs'
                               : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-xs'
                           }`}
                         >
@@ -932,6 +1078,21 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                                 <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" />
                                 <span>Inscrit(e) ✓</span>
                               </span>
+                            ) : isWaitlisted ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1.5 rounded-lg border border-amber-300">
+                                  <Timer className="w-3.5 h-3.5 text-amber-700" />
+                                  <span>En attente (n°{waitlistIds.indexOf(student.id) + 1})</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleLeaveWaitlist(student.id)}
+                                  className="px-2 py-1 text-[11px] font-bold text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-slate-200 cursor-pointer"
+                                  title="Se retirer de la liste d'attente"
+                                >
+                                  Retirer
+                                </button>
+                              </div>
                             ) : penalty.isBlocked ? (
                               <button
                                 type="button"
@@ -949,6 +1110,23 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                                 title={`Critères manquants : ${missingReqs.join(', ')}`}
                               >
                                 <span>Critères manquants ⚠️</span>
+                              </button>
+                            ) : isFull ? (
+                              <button
+                                type="button"
+                                onClick={() => handleEnroll(student)}
+                                disabled={enrollingId === student.id}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 sm:py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                                title="Rejoindre la file d'attente"
+                              >
+                                {enrollingId === student.id ? (
+                                  <span>Enregistrement...</span>
+                                ) : (
+                                  <>
+                                    <Timer className="w-4 h-4" />
+                                    <span>S'inscrire (File d'attente)</span>
+                                  </>
+                                )}
                               </button>
                             ) : (
                               <button
