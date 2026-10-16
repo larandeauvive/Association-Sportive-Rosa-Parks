@@ -4,7 +4,8 @@ import {
   Users, CheckCircle, Download, Printer, Search, Settings2, 
   Database, Trash2, ArrowRightLeft, CalendarDays, Loader2, 
   PlusCircle, LogOut, KeyRound, ShieldAlert, RefreshCw, Copy, 
-  Check, CloudUpload, ExternalLink, FileText, FileSpreadsheet
+  Check, CloudUpload, ExternalLink, FileText, FileSpreadsheet,
+  Shirt, CreditCard
 } from 'lucide-react';
 import { StatCard } from './components/StatCard';
 import { Modal } from './components/Modal';
@@ -23,6 +24,8 @@ import { TeacherLoginScreen } from './components/TeacherLoginScreen';
 import { Dashboard } from './components/Dashboard';
 import { CalendarView } from './components/CalendarView';
 import { StaffManager } from './components/StaffManager';
+import { TshirtStatsModal } from './components/TshirtStatsModal';
+import { CheckSearchModal } from './components/CheckSearchModal';
 import { importFromCSV } from './lib/importCsv';
 import { 
   deleteMultipleStudents, updateMultipleStudents, addStudent, 
@@ -46,7 +49,7 @@ const INITIAL_COLUMNS: ColumnDefinition[] = [
   { key: 'swimmingCertificate', label: 'Savoir Nager', visible: true },
   { key: 'amount', label: 'Montant', visible: true },
   { key: 'paymentMethod', label: 'Paiement', visible: true },
-  { key: 'checkNumber', label: 'N° Chèque', visible: false },
+  { key: 'checkNumber', label: 'N° Chèque', visible: true },
   { key: 'opussChecked', label: 'Ajout OPUSS', visible: false },
   { key: 'tshirt', label: 'Maillot', visible: true },
   { key: 'size', label: 'Taille Maillot', visible: true },
@@ -212,6 +215,8 @@ export default function App() {
   const [isClassListingOpen, setIsClassListingOpen] = useState(false);
   const [exportType, setExportType] = useState<'csv'|'print'>('csv');
   const [isBackupManagerOpen, setIsBackupManagerOpen] = useState(false);
+  const [isCheckSearchOpen, setIsCheckSearchOpen] = useState(false);
+  const [isTshirtModalOpen, setIsTshirtModalOpen] = useState(false);
   
   const [isRolloverOpen, setIsRolloverOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -280,16 +285,37 @@ export default function App() {
       // Must match active year unless user clears it (we can enforce it always matches)
       const matchesYear = student.schoolYear === activeYear;
       
-      const searchLower = searchTerm.toLowerCase();
+      const searchLower = searchTerm.toLowerCase().trim();
+      if (!searchLower) {
+        const matchesClass = classFilter === '' || student.classGroup === classFilter;
+        return matchesYear && matchesClass;
+      }
+
       const matchesSearch = 
         (student.lastName || '').toLowerCase().includes(searchLower) ||
-        (student.firstName || '').toLowerCase().includes(searchLower);
+        (student.firstName || '').toLowerCase().includes(searchLower) ||
+        `${student.firstName || ''} ${student.lastName || ''}`.toLowerCase().includes(searchLower) ||
+        `${student.lastName || ''} ${student.firstName || ''}`.toLowerCase().includes(searchLower) ||
+        (student.checkNumber || '').toLowerCase().includes(searchLower) ||
+        (student.licenseNumber || '').toLowerCase().includes(searchLower);
       
       const matchesClass = classFilter === '' || student.classGroup === classFilter;
       
       return matchesYear && matchesSearch && matchesClass;
     });
   }, [students, searchTerm, classFilter, activeYear]);
+
+  // Détection des élèves correspondants spécifiquement par numéro de chèque
+  const checkNumberMatches = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return [];
+    return filteredStudents.filter(s => (s.checkNumber || '').toLowerCase().includes(q));
+  }, [filteredStudents, searchTerm]);
+
+  // Nombre d'élèves ayant demandé un T-shirt cette année
+  const tshirtCount = useMemo(() => {
+    return students.filter(s => s.schoolYear === activeYear && (String(s.tshirt || '').toUpperCase() === 'OUI' || (s.size && s.size.trim() !== ''))).length;
+  }, [students, activeYear]);
 
   // Derived
   const uniqueClasses = useMemo(() => {
@@ -812,20 +838,20 @@ export default function App() {
             {/* Toolbar */}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col lg:flex-row gap-4 items-center justify-between">
               
-              <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-                <div className="relative w-full sm:w-64">
+              <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto items-stretch sm:items-center">
+                <div className="relative w-full sm:w-72">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   <input 
                     type="text" 
-                    placeholder="Chercher un nom..." 
-                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition-colors"
+                    placeholder="Chercher nom, prénom, n° chèque..." 
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:bg-white transition-colors text-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
                 
                 <select 
-                  className="w-full sm:w-48 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full sm:w-44 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900 text-sm"
                   value={classFilter}
                   onChange={(e) => setClassFilter(e.target.value)}
                 >
@@ -834,6 +860,26 @@ export default function App() {
                     <option key={cls} value={cls}>{cls}</option>
                   ))}
                 </select>
+
+                <button
+                  type="button"
+                  onClick={() => setIsCheckSearchOpen(true)}
+                  className="flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-3 py-2 rounded-lg transition shadow-2xs font-bold text-xs sm:text-sm cursor-pointer shrink-0"
+                  title="Rechercher spécifiquement un numéro de chèque et accéder directement à la fiche élève"
+                >
+                  <CreditCard className="w-4 h-4 text-amber-700" />
+                  <span>Recherche Chèque</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsTshirtModalOpen(true)}
+                  className="flex items-center justify-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3 py-2 rounded-lg transition shadow-2xs font-bold text-xs sm:text-sm cursor-pointer shrink-0"
+                  title="Voir le nombre de T-shirts et le détail par taille"
+                >
+                  <Shirt className="w-4 h-4 text-indigo-600" />
+                  <span>T-shirts ({tshirtCount})</span>
+                </button>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-end">
@@ -882,6 +928,30 @@ export default function App() {
               </div>
             </div>
 
+            {/* Bannière de résultat si recherche par numéro de chèque */}
+            {checkNumberMatches.length > 0 && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs animate-in fade-in">
+                <div className="flex items-center gap-2.5 text-xs sm:text-sm text-amber-950 font-bold">
+                  <CreditCard className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>
+                    {checkNumberMatches.length === 1 
+                      ? `Chèque n° ${checkNumberMatches[0].checkNumber} trouvé pour : ${checkNumberMatches[0].lastName} ${checkNumberMatches[0].firstName} (${checkNumberMatches[0].classGroup || 'Sans classe'} - ${checkNumberMatches[0].amount || 0} €)`
+                      : `${checkNumberMatches.length} élève(s) trouvé(s) avec ce numéro de chèque`}
+                  </span>
+                </div>
+                {checkNumberMatches.length === 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setEditStudent(checkNumberMatches[0])}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black shadow-xs transition cursor-pointer shrink-0 active:scale-95"
+                  >
+                    <span>Accéder à la fiche élève</span>
+                    <span>→</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Data Table */}
             <StudentTable 
               students={filteredStudents}
@@ -917,6 +987,8 @@ export default function App() {
               setCurrentTab('convocations');
               setAutoCreateConvocation(true);
             }}
+            onOpenStudentSheet={(st) => setEditStudent(st)}
+            onOpenCheckSearch={() => setIsCheckSearchOpen(true)}
           />
         )}
 
@@ -977,6 +1049,28 @@ export default function App() {
         students={students}
         activeYear={activeYear}
         onRefreshData={fetchStudents}
+      />
+
+      <CheckSearchModal
+        isOpen={isCheckSearchOpen}
+        onClose={() => setIsCheckSearchOpen(false)}
+        students={students}
+        activeYear={activeYear}
+        onOpenStudentSheet={(st) => {
+          setIsCheckSearchOpen(false);
+          setEditStudent(st);
+        }}
+      />
+
+      <TshirtStatsModal
+        isOpen={isTshirtModalOpen}
+        onClose={() => setIsTshirtModalOpen(false)}
+        students={students}
+        activeYear={activeYear}
+        onOpenStudentSheet={(st) => {
+          setIsTshirtModalOpen(false);
+          setEditStudent(st);
+        }}
       />
 
       <Modal 

@@ -32,6 +32,9 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = (s.lastName || '').toLowerCase().includes(searchLower) ||
                           (s.firstName || '').toLowerCase().includes(searchLower) ||
+                          `${s.firstName || ''} ${s.lastName || ''}`.toLowerCase().includes(searchLower) ||
+                          `${s.lastName || ''} ${s.firstName || ''}`.toLowerCase().includes(searchLower) ||
+                          (s.checkNumber || '').toLowerCase().includes(searchLower) ||
                           (s.classGroup || '').toLowerCase().includes(searchLower);
     
     // 2. Filtre classe
@@ -239,7 +242,7 @@ export const TeacherPortal: React.FC<Props> = ({ students, activeYear, onLogout 
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input 
                     type="text" 
-                    placeholder="Rechercher un élève, une classe..." 
+                    placeholder="Rechercher un élève, classe, n° chèque..." 
                     className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-xs sm:text-sm transition-colors"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}

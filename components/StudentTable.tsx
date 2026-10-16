@@ -172,6 +172,30 @@ export const StudentTable: React.FC<StudentTableProps> = ({
                           })()
                         ) : col.key === 'birthDate' ? (
                            <span>{formatDateFr(student[col.key as string])}</span>
+                        ) : col.key === 'checkNumber' ? (
+                          student.checkNumber ? (
+                            <span className="inline-flex items-center gap-1 font-mono text-xs font-bold text-amber-950 bg-amber-50 px-2 py-0.5 rounded border border-amber-300 shadow-2xs">
+                              💳 {student.checkNumber}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs italic">-</span>
+                          )
+                        ) : col.key === 'tshirt' ? (
+                          String(student.tshirt || '').toUpperCase() === 'OUI' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                              👕 OUI
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs font-medium">NON</span>
+                          )
+                        ) : col.key === 'size' ? (
+                          student.size ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-black bg-slate-100 text-slate-800 border border-slate-300">
+                              {student.size}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs italic">-</span>
+                          )
                         ) : (
                           student[col.key as string]
                         )}
