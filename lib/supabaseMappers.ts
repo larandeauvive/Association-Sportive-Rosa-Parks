@@ -98,6 +98,7 @@ export function rowToSession(row: any): Session {
     teamSize: row.team_size ?? row.teamSize ?? undefined,
     teams: Array.isArray(row.teams) ? row.teams : (typeof row.teams === 'string' ? (JSON.parse(row.teams) || []) : (row.teams ?? [])),
     recurrenceGroupId: row.recurrence_group_id ?? row.recurrenceGroupId,
+    blockLastWeekAbsent: row.block_last_week_absent !== undefined && row.block_last_week_absent !== null ? Boolean(row.block_last_week_absent) : (row.blockLastWeekAbsent !== undefined && row.blockLastWeekAbsent !== null ? Boolean(row.blockLastWeekAbsent) : undefined),
     blockOnlineRegistration: row.block_online_registration ?? row.blockOnlineRegistration ?? false,
     directRegistrationTeacherId: row.direct_registration_teacher_id ?? row.directRegistrationTeacherId,
     directRegistrationTeacherName: row.direct_registration_teacher_name ?? row.directRegistrationTeacherName,
@@ -146,6 +147,7 @@ export function sessionToRow(session: Partial<Session>): any {
   if (session.teamSize !== undefined) row.team_size = session.teamSize;
   if (session.teams !== undefined) row.teams = session.teams;
   if (session.recurrenceGroupId !== undefined) row.recurrence_group_id = session.recurrenceGroupId;
+  if (session.blockLastWeekAbsent !== undefined) row.block_last_week_absent = session.blockLastWeekAbsent;
   if (session.blockOnlineRegistration !== undefined) row.block_online_registration = session.blockOnlineRegistration;
   if (session.directRegistrationTeacherId !== undefined) row.direct_registration_teacher_id = session.directRegistrationTeacherId;
   if (session.directRegistrationTeacherName !== undefined) row.direct_registration_teacher_name = session.directRegistrationTeacherName;

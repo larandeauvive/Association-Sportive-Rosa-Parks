@@ -382,7 +382,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
     for (const member of selectedTeamStudents) {
       const penalty = checkUnexcusedAbsencePenalty(session, member.id, allSessions);
       if (penalty.isBlocked) {
-        alert(`⚠️ Inscription impossible pour l'équipe :\n\n${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée sur un créneau du mardi soir ou jeudi.\n\n${penalty.reason}`);
+        alert(`⚠️ Inscription impossible pour l'équipe :\n\n${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée la semaine passée.\n\n${penalty.reason}`);
         return;
       }
     }
@@ -1299,7 +1299,7 @@ export function PublicEnrollment({ sessionId, onBack }: PublicEnrollmentProps) {
                                   ) : penalty.isBlocked ? (
                                     <button
                                       type="button"
-                                      onClick={() => alert(`⚠️ Inscription impossible pour l'équipe :\n\n${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée le mardi soir ou jeudi.\n\n${penalty.reason}`)}
+                                      onClick={() => alert(`⚠️ Inscription impossible pour l'équipe :\n\n${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée la semaine passée.\n\n${penalty.reason}`)}
                                       className="px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 text-[11px] font-bold rounded-lg cursor-pointer"
                                       title={penalty.reason}
                                     >

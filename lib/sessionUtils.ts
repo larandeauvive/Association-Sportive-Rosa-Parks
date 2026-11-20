@@ -348,12 +348,26 @@ export function isTuesdayOrThursdaySession(session: Partial<Session>): boolean {
 }
 
 /**
+ * Détermine si le blocage des absents de la semaine passée (S-1) est activé pour une séance.
+ * - Si `blockLastWeekAbsent` est explicitement défini (true/false), sa valeur fait foi.
+ * - Sinon (anciennes séances sans réglage explicite), activé par défaut pour les créneaux
+ *   du mardi/jeudi ou les séries récurrentes.
+ */
+export function isBlockLastWeekAbsentEnabled(session: Partial<Session>): boolean {
+  if (session.blockLastWeekAbsent !== undefined && session.blockLastWeekAbsent !== null) {
+    return Boolean(session.blockLastWeekAbsent);
+  }
+  return isTuesdayOrThursdaySession(session) || !!session.recurrenceGroupId;
+}
+
+/**
  * Vérifie si un élève est sous le coup d'une suspension d'inscription pour la semaine suivante
- * suite à une absence non pointée (inscrit mais non présent) lors d'une séance du mardi soir ou du jeudi.
+ * suite à une absence non pointée (inscrit mais non présent) lors d'une séance de la semaine précédente.
  *
- * Règle demandée :
- * Si un élève inscrit sur une séance du mardi soir (ou du jeudi) est absent (non pointé présent et non excusé),
- * son inscription la semaine suivante (semaine civile N+1) est impossible.
+ * Règle configurable par séance :
+ * - Si `blockLastWeekAbsent` est désactivé sur la séance cible, aucun blocage n'est appliqué.
+ * - Si activé, toute absence non excusée la semaine civile précédente (N-1) sur un créneau
+ *   soumis au contrôle (mardi/jeudi, récurrent ou même activité avec blocage actif) bloque l'inscription en semaine N.
  */
 export function checkUnexcusedAbsencePenalty(
   targetSession: Session,
@@ -364,17 +378,36 @@ export function checkUnexcusedAbsencePenalty(
     return { isBlocked: false };
   }
 
+  // Respecter le choix par séance (sauf appel générique isStudentSuspendedThisWeek)
+  if (targetSession.id !== '__current_week_check__' && !isBlockLastWeekAbsentEnabled(targetSession)) {
+    return { isBlocked: false };
+  }
+
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const mondayTarget = getMondayOfWeek(targetSession.date);
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const targetNormName = (targetSession.name || '').trim().toLowerCase();
 
   for (const pastSession of allSessions) {
     if (!pastSession.date || pastSession.id === targetSession.id) continue;
     if (pastSession.schoolYear && targetSession.schoolYear && pastSession.schoolYear !== targetSession.schoolYear) continue;
 
-    // Doit être un créneau du mardi (soir) ou du jeudi
-    if (!isTuesdayOrThursdaySession(pastSession)) continue;
+    // Si l'absence a eu lieu sur une séance où le blocage est explicitement désactivé, ne pas pénaliser
+    if (pastSession.blockLastWeekAbsent === false) continue;
+
+    // La séance passée doit être soumise au contrôle d'assiduité (mardi/jeudi, blocage activé, récurrente ou même activité)
+    const sameActivityName = !!(
+      targetSession.id !== '__current_week_check__' &&
+      targetNormName &&
+      pastSession.name &&
+      pastSession.name.trim().toLowerCase() === targetNormName
+    );
+    const pastQualifies =
+      isTuesdayOrThursdaySession(pastSession) ||
+      isBlockLastWeekAbsentEnabled(pastSession) ||
+      sameActivityName;
+    if (!pastQualifies) continue;
 
     // Doit être antérieure à targetSession et ne pas être dans le futur
     if (pastSession.date >= targetSession.date) continue;
@@ -407,7 +440,7 @@ export function checkUnexcusedAbsencePenalty(
 
       return {
         isBlocked: true,
-        reason: `Inscription impossible pour la semaine suivante : élève noté(e) absent(e) lors de la séance du ${dayName} ${dateFr} (${pastSession.name || 'Séance'}). Conformément au règlement de l'AS, toute absence non justifiée sur un créneau du mardi soir ou du jeudi entraîne la suspension des inscriptions pour la semaine suivante.`,
+        reason: `Inscription impossible pour la semaine suivante : élève noté(e) absent(e) lors de la séance du ${dayName} ${dateFr} (${pastSession.name || 'Séance'}). Conformément au règlement de cette séance, toute absence non justifiée la semaine passée entraîne la suspension des inscriptions pour la semaine suivante.`,
         penalizingSession: pastSession,
         penaltyDateFr: dateFr,
         dayName
@@ -436,6 +469,7 @@ export function isStudentSuspendedThisWeek(
     time: '17:00',
     schoolYear: '',
     requireLicense: false,
+    blockLastWeekAbsent: true,
     enrolledStudentIds: [],
     presentStudentIds: []
   };

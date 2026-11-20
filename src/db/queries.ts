@@ -356,6 +356,7 @@ export async function getSessions(schoolYear?: string): Promise<Session[]> {
       teamSize: r.teamSize ?? undefined,
       teams: (r.teams as any) ?? [],
       recurrenceGroupId: r.recurrenceGroupId ?? undefined,
+      blockLastWeekAbsent: r.blockLastWeekAbsent ?? undefined,
       blockOnlineRegistration: !!r.blockOnlineRegistration,
       directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
       directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
@@ -404,6 +405,7 @@ export async function getSessionById(id: string): Promise<Session | null> {
       teamSize: r.teamSize ?? undefined,
       teams: (r.teams as any) ?? [],
       recurrenceGroupId: r.recurrenceGroupId ?? undefined,
+      blockLastWeekAbsent: r.blockLastWeekAbsent ?? undefined,
       blockOnlineRegistration: !!r.blockOnlineRegistration,
       directRegistrationTeacherId: r.directRegistrationTeacherId ?? undefined,
       directRegistrationTeacherName: r.directRegistrationTeacherName ?? undefined,
@@ -454,6 +456,7 @@ export async function createSession(data: Omit<Session, 'id'> & { id?: string })
       teamSize: data.teamSize || null,
       teams: data.teams || [],
       recurrenceGroupId: data.recurrenceGroupId || null,
+      blockLastWeekAbsent: data.blockLastWeekAbsent !== undefined && data.blockLastWeekAbsent !== null ? Boolean(data.blockLastWeekAbsent) : null,
       blockOnlineRegistration: !!data.blockOnlineRegistration,
       directRegistrationTeacherId: data.directRegistrationTeacherId || null,
       directRegistrationTeacherName: data.directRegistrationTeacherName || null,
@@ -508,6 +511,7 @@ export async function updateSessionById(id: string, data: Partial<Session>): Pro
     if (data.teamSize !== undefined) payload.teamSize = data.teamSize;
     if (data.teams !== undefined) payload.teams = data.teams;
     if (data.recurrenceGroupId !== undefined) payload.recurrenceGroupId = data.recurrenceGroupId;
+    if (data.blockLastWeekAbsent !== undefined) payload.blockLastWeekAbsent = data.blockLastWeekAbsent;
     if (data.blockOnlineRegistration !== undefined) payload.blockOnlineRegistration = data.blockOnlineRegistration;
     if (data.directRegistrationTeacherId !== undefined) payload.directRegistrationTeacherId = data.directRegistrationTeacherId;
     if (data.directRegistrationTeacherName !== undefined) payload.directRegistrationTeacherName = data.directRegistrationTeacherName;

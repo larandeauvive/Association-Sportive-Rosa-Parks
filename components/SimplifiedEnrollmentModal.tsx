@@ -351,7 +351,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
     for (const member of teamMembers) {
       const penalty = checkUnexcusedAbsencePenalty(session, member.id, allSessions);
       if (penalty.isBlocked) {
-        setErrorMessage(`⚠️ Inscription d'équipe impossible : ${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée le mardi soir ou jeudi.`);
+        setErrorMessage(`⚠️ Inscription d'équipe impossible : ${member.firstName} ${member.lastName} est suspendu(e) d'inscription cette semaine suite à une absence constatée la semaine passée.`);
         return;
       }
 
@@ -1048,7 +1048,7 @@ export const SimplifiedEnrollmentModal: React.FC<SimplifiedEnrollmentModalProps>
                               ) : penalty.isBlocked ? (
                                 <button
                                   type="button"
-                                  onClick={() => setErrorMessage(`⚠️ Inscription d'équipe impossible : ${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée le mardi soir ou jeudi.\n\n${penalty.reason}`)}
+                                  onClick={() => setErrorMessage(`⚠️ Inscription d'équipe impossible : ${student.firstName} ${student.lastName} est suspendu(e) cette semaine suite à une absence constatée la semaine passée.\n\n${penalty.reason}`)}
                                   className="px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 text-[11px] font-bold rounded-lg cursor-pointer"
                                   title={penalty.reason}
                                 >

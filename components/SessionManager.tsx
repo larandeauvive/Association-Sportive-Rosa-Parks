@@ -20,7 +20,7 @@ import {
   getSeriesSessions, getFutureSeriesSessions, 
   formatRegistrationRule, getSessionRegistrationStatus,
   getSessionCategory, getSessionDayName, SessionCategory,
-  checkUnexcusedAbsencePenalty
+  checkUnexcusedAbsencePenalty, isBlockLastWeekAbsentEnabled
 } from '../lib/sessionUtils';
 
 interface SessionManagerProps {
@@ -730,6 +730,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         presentStudentIds: [],
         registrationDaysBefore: 0,
         registrationCloseTime: '12:00',
+        blockLastWeekAbsent: true,
         blockOnlineRegistration: false,
         directRegistrationTeacherId: undefined,
         directRegistrationTeacherName: undefined,
@@ -754,6 +755,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         presentStudentIds: [],
         registrationDaysBefore: 1,
         registrationCloseTime: '18:00',
+        blockLastWeekAbsent: false,
         blockOnlineRegistration: false,
         directRegistrationTeacherId: undefined,
         directRegistrationTeacherName: undefined,
@@ -774,6 +776,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
   const openEditForm = (sess: Session) => {
     setFormData({ 
       ...sess,
+      blockLastWeekAbsent: isBlockLastWeekAbsentEnabled(sess),
       blockOnlineRegistration: !!sess.blockOnlineRegistration,
       directRegistrationTeacherId: sess.directRegistrationTeacherId,
       directRegistrationTeacherName: sess.directRegistrationTeacherName,
@@ -852,6 +855,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         registrationOpenDaysBefore: regOpenDaysBefore,
         registrationCloseDate: regCloseDate,
         registrationOpenDate: regOpenDate,
+        blockLastWeekAbsent: !!formData.blockLastWeekAbsent,
         blockOnlineRegistration: !!formData.blockOnlineRegistration,
         directRegistrationTeacherId: formData.blockOnlineRegistration ? formData.directRegistrationTeacherId : undefined,
         directRegistrationTeacherName: formData.blockOnlineRegistration ? formData.directRegistrationTeacherName : undefined,
@@ -1017,12 +1021,12 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         }
       }
 
-      // Contrôle de la suspension d'assiduité (absence mardi soir ou jeudi précédent)
+      // Contrôle de la suspension d'assiduité (absence non justifiée la semaine précédente)
       const penaltyCheck = checkUnexcusedAbsencePenalty(target, studentId, sessions);
       if (penaltyCheck.isBlocked) {
         const student = students.find(s => s.id === studentId);
         const proceed = confirm(
-          `⚠️ Suspension d'inscription pour la semaine suivante :\n\n${student ? student.firstName + ' ' + student.lastName : 'Cet élève'} a été noté(e) absent(e) sans justification lors de la séance précédente du mardi soir ou jeudi.\n\n${penaltyCheck.reason}\n\nEn tant qu'enseignant / gestionnaire, confirmez-vous son inscription exceptionnelle ?`
+          `⚠️ Suspension d'inscription pour la semaine suivante :\n\n${student ? student.firstName + ' ' + student.lastName : 'Cet élève'} a été noté(e) absent(e) sans justification la semaine passée.\n\n${penaltyCheck.reason}\n\nEn tant qu'enseignant / gestionnaire, confirmez-vous son inscription exceptionnelle ?`
         );
         if (!proceed) return;
       }
@@ -1220,6 +1224,32 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
         presentStudentIds: []
       });
       setNotification("Pointage d'appel réinitialisé (tous absents).");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Basculer le blocage des absents de la semaine passée (S-1) pour une séance
+  const toggleBlockLastWeekAbsent = async (sess: Session) => {
+    const nextValue = !isBlockLastWeekAbsentEnabled(sess);
+    setSessions(prev => prev.map(s => s.id === sess.id ? {
+      ...s,
+      blockLastWeekAbsent: nextValue
+    } : s));
+    if (isCreating && formData.id === sess.id) {
+      setFormData(prev => ({ ...prev, blockLastWeekAbsent: nextValue }));
+    }
+    try {
+      await saveSessionApi({
+        ...sess,
+        id: sess.id,
+        blockLastWeekAbsent: nextValue
+      });
+      setNotification(
+        nextValue
+          ? "🚫 Absents S-1 bloqués pour cette séance"
+          : "✅ Absents S-1 autorisés à s'inscrire pour cette séance"
+      );
     } catch (err) {
       console.error(err);
     }
@@ -1506,6 +1536,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                   <span>PDF</span>
                 </span>
               )}
+              {isBlockLastWeekAbsentEnabled(s) ? (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200" title="Blocage actif pour les absents non excusés de la semaine passée">
+                  🚫 Abs. S-1 bloqués
+                </span>
+              ) : (isSoir || isSeries) ? (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200" title="Les absents de la semaine passée peuvent s'inscrire">
+                  ✅ Abs. S-1 autorisés
+                </span>
+              ) : null}
             </div>
             <div className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 flex-wrap">
               <span className="font-semibold text-slate-700">
@@ -3398,6 +3437,24 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                     </div>
                   </label>
                 </div>
+
+                {/* Option blocage des absents de la semaine passée */}
+                <label className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${formData.blockLastWeekAbsent ? 'bg-rose-50/90 border-rose-300 text-rose-950' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
+                  <input 
+                    type="checkbox" 
+                    className="rounded text-rose-600 focus:ring-rose-500 w-4 h-4 mt-0.5"
+                    checked={!!formData.blockLastWeekAbsent}
+                    onChange={e => setFormData({...formData, blockLastWeekAbsent: e.target.checked})}
+                  />
+                  <div className="flex-1">
+                    <span className="text-xs font-bold block">
+                      🚫 Bloquer l'inscription pour les absents de la semaine passée (S-1)
+                    </span>
+                    <span className="text-[11px] text-slate-600 leading-snug block mt-0.5">
+                      Si coché, les élèves inscrits et notés absents non excusés la semaine précédente ne pourront pas s'inscrire à cette séance. Décochez pour autoriser leur inscription.
+                    </span>
+                  </div>
+                </label>
               </div>
 
               <div className="space-y-2">
@@ -3835,6 +3892,22 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                   {activeSession.needSnack && (
                     <span className="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-1 rounded-full border border-amber-200">Goûter à prévoir</span>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => toggleBlockLastWeekAbsent(activeSession)}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      isBlockLastWeekAbsentEnabled(activeSession)
+                        ? 'bg-rose-100 hover:bg-rose-200 text-rose-900 border-rose-300'
+                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                    }`}
+                    title="Cliquer pour activer ou désactiver le blocage d'inscription des absents de la semaine passée (S-1) sur cette séance"
+                  >
+                    <span>
+                      {isBlockLastWeekAbsentEnabled(activeSession)
+                        ? '🚫 Absents S-1 bloqués'
+                        : '✅ Absents S-1 autorisés'}
+                    </span>
+                  </button>
                   {(activeSession.waitlistStudentIds || []).length > 0 && (
                     <button
                       type="button"

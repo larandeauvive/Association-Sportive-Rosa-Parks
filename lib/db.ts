@@ -738,6 +738,7 @@ function mergeSessionsWithLocal(remoteList: Session[], schoolYear?: string): Ses
         map.set(s.id, {
           ...s,
           ...existing,
+          blockLastWeekAbsent: existing.blockLastWeekAbsent !== undefined ? existing.blockLastWeekAbsent : s.blockLastWeekAbsent,
           enrolledStudentIds: mergedEnrolled,
           presentStudentIds: mergedPresent,
           attachedPdf: pdf
@@ -796,6 +797,7 @@ export const getSessionsList = async (schoolYear?: string): Promise<Session[]> =
             map.set(s.id, {
               ...s,
               ...cur,
+              blockLastWeekAbsent: cur.blockLastWeekAbsent !== undefined ? cur.blockLastWeekAbsent : s.blockLastWeekAbsent,
               enrolledStudentIds: mergedEnrolled,
               presentStudentIds: mergedPresent,
               attachedPdf: cur.attachedPdf || s.attachedPdf
@@ -1384,6 +1386,7 @@ export const generateSessionFromWaitlistApi = async (
     description: sourceSession.description ? `(Créé suite à liste d'attente du ${sourceSession.date}) ${sourceSession.description}` : `Séance supplémentaire créée depuis la liste d'attente de la séance du ${sourceSession.date}`,
     registrationDaysBefore: sourceSession.registrationDaysBefore,
     registrationCloseTime: sourceSession.registrationCloseTime,
+    blockLastWeekAbsent: sourceSession.blockLastWeekAbsent,
     enrolledStudentIds: Array.from(new Set(newSessionData.studentIdsToTransfer)),
     presentStudentIds: [],
     waitlistStudentIds: []

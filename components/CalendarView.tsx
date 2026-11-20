@@ -24,7 +24,7 @@ import { SimplifiedEnrollmentModal } from './SimplifiedEnrollmentModal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { downloadRegistrationForm, formatFileSize } from '../lib/registrationFormHelper';
 import { getStudentCategory } from '../lib/categoryUtils';
-import { getSessionCategory, getSessionDayName, formatRegistrationRule, getSeriesSessions } from '../lib/sessionUtils';
+import { getSessionCategory, getSessionDayName, formatRegistrationRule, getSeriesSessions, isBlockLastWeekAbsentEnabled } from '../lib/sessionUtils';
 
 interface Props {
   students: Student[];
@@ -157,6 +157,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
   const [newEventRequireParentalAuth, setNewEventRequireParentalAuth] = useState(false);
   const [newEventRequireSwimmingCertificate, setNewEventRequireSwimmingCertificate] = useState(false);
   const [newEventRequirePaid, setNewEventRequirePaid] = useState(false);
+  const [newEventBlockLastWeekAbsent, setNewEventBlockLastWeekAbsent] = useState(false);
   const [newEventMaxParticipants, setNewEventMaxParticipants] = useState<number | ''>('');
   const [newEventRegistrationOpenDate, setNewEventRegistrationOpenDate] = useState('');
   const [newEventRegistrationCloseDate, setNewEventRegistrationCloseDate] = useState('');
@@ -572,6 +573,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventRequireParentalAuth(!!session.requireParentalAuth);
     setNewEventRequireSwimmingCertificate(!!session.requireSwimmingCertificate);
     setNewEventRequirePaid(!!session.requirePaid);
+    setNewEventBlockLastWeekAbsent(isBlockLastWeekAbsentEnabled(session));
     setNewEventMaxParticipants(session.maxParticipants || '');
     setNewEventRegistrationOpenDate(session.registrationOpenDate || '');
     setNewEventRegistrationCloseDate(session.registrationCloseDate || '');
@@ -824,6 +826,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     setNewEventRequireParentalAuth(false);
     setNewEventRequireSwimmingCertificate(false);
     setNewEventRequirePaid(false);
+    setNewEventBlockLastWeekAbsent(day.getDay() === 2 || day.getDay() === 4);
     setNewEventMaxParticipants('');
     setNewEventRegistrationOpenDate('');
     setNewEventRegistrationCloseDate('');
@@ -869,6 +872,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           requireParentalAuth: newEventRequireParentalAuth,
           requireSwimmingCertificate: newEventRequireSwimmingCertificate,
           requirePaid: newEventRequirePaid,
+          blockLastWeekAbsent: newEventBlockLastWeekAbsent,
           maxParticipants: newEventMaxParticipants ? Number(newEventMaxParticipants) : null,
           registrationOpenDate: newEventRegistrationOpenDate || null,
           registrationCloseDate: newEventRegistrationCloseDate || null,
@@ -921,6 +925,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
           requireParentalAuth: newEventRequireParentalAuth,
           requireSwimmingCertificate: newEventRequireSwimmingCertificate,
           requirePaid: newEventRequirePaid,
+          blockLastWeekAbsent: newEventBlockLastWeekAbsent,
           maxParticipants: newEventMaxParticipants ? Number(newEventMaxParticipants) : undefined,
           registrationOpenDate: newEventRegistrationOpenDate || undefined,
           registrationCloseDate: newEventRegistrationCloseDate || undefined,
@@ -3215,6 +3220,15 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                         🏊 Savoir nager requis
                       </span>
                     )}
+                    {isBlockLastWeekAbsentEnabled(selectedEvent.raw as Session) ? (
+                      <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-rose-200">
+                        🚫 Absents S-1 bloqués
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
+                        ✅ Absents S-1 autorisés
+                      </span>
+                    )}
                   </div>
                 )}
                 <div className="flex flex-col gap-2">
@@ -4659,6 +4673,20 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                         </div>
                       </label>
                     </div>
+
+                    <label className={`flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors ${newEventBlockLastWeekAbsent ? 'bg-rose-50/90 border-rose-300 text-rose-950' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'}`}>
+                      <input 
+                        type="checkbox" 
+                        id="blockLastWeekAbsentCal"
+                        className="w-4 h-4 text-rose-600 rounded border-gray-300 focus:ring-rose-500 mt-0.5"
+                        checked={newEventBlockLastWeekAbsent}
+                        onChange={e => setNewEventBlockLastWeekAbsent(e.target.checked)}
+                      />
+                      <div>
+                        <span className="text-xs font-bold block">🚫 Bloquer l'inscription pour les absents de la semaine passée (S-1)</span>
+                        <span className="text-[10px] text-slate-500 leading-tight block">Si coché, les élèves absents non excusés la semaine précédente ne pourront pas s'inscrire à cette séance.</span>
+                      </div>
+                    </label>
                   </div>
 
                   {/* Section Inscription en équipe */}

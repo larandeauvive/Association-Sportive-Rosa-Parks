@@ -66,6 +66,7 @@ export const sessions = pgTable('sessions', {
   registrationCloseTime: text('registration_close_time'),
   registrationOpenDaysBefore: integer('registration_open_days_before'),
   recurrenceGroupId: text('recurrence_group_id'),
+  blockLastWeekAbsent: boolean('block_last_week_absent'),
   blockOnlineRegistration: boolean('block_online_registration').default(false),
   directRegistrationTeacherId: text('direct_registration_teacher_id'),
   directRegistrationTeacherName: text('direct_registration_teacher_name'),

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Student, Session, Teacher } from '../types';
 import { saveSessionApi, promoteFromWaitlistApi, leaveSessionWaitlistApi, getTeachersList, getSessionsList } from '../lib/db';
-import { getSessionDayName, getSessionCategory, isTuesdayOrThursdaySession, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
+import { getSessionDayName, getSessionCategory, isBlockLastWeekAbsentEnabled, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
 import { GenerateSessionFromWaitlistModal } from './GenerateSessionFromWaitlistModal';
 import { 
   CheckCircle2, Circle, Users, UserCheck, PlusCircle, Search, 
@@ -805,7 +805,7 @@ export const SessionRollCallModal: React.FC<Props> = ({
             {enrolledStudents.map(s => {
               const isPresent = (currentSession.presentStudentIds || []).includes(s.id);
               const isExcused = (currentSession.excusedStudentIds || []).includes(s.id);
-              const isTuesdayOrThursday = isTuesdayOrThursdaySession(currentSession);
+              const isTuesdayOrThursday = isBlockLastWeekAbsentEnabled(currentSession);
               const isAuth = String(s.parentalAuth).toUpperCase() === 'OUI';
               const isImage = String(s.imageRights).toUpperCase() === 'OUI';
               const isSwim = String(s.swimmingCertificate).toUpperCase() === 'OUI';

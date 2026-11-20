@@ -128,6 +128,7 @@ export interface Session {
   teamSize?: number; // Nombre d'élèves requis par équipe pour valider l'inscription
   teams?: SessionTeam[]; // Liste des équipes enregistrées
   recurrenceGroupId?: string; // Identifiant unique pour lier un groupe de séances récurrentes
+  blockLastWeekAbsent?: boolean; // Bloquer l'inscription pour les absents de la semaine passée (S-1)
   blockOnlineRegistration?: boolean; // Bloquer les inscriptions en ligne pour cet événement
   directRegistrationTeacherId?: string; // ID de l'enseignant responsable pour inscription directe
   directRegistrationTeacherName?: string; // Nom de l'enseignant ("Voir l'inscription directement avec...")

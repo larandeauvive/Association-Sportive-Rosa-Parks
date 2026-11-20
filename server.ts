@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
@@ -45,8 +45,6 @@ import {
   restoreDatabaseBackup
 } from './src/db/queries.ts';
 import { checkUnexcusedAbsencePenalty } from './lib/sessionUtils.ts';
-
-dotenv.config();
 
 const PORT = 3000;
 
@@ -580,7 +578,7 @@ async function startServer() {
         if (penaltyCheck.isBlocked) {
           const student = await getStudentById(mId);
           return res.status(400).json({ 
-            error: `Inscription de l'équipe impossible : ${student ? student.firstName + ' ' + student.lastName : 'Un élève'} est suspendu(e) d'inscription cette semaine suite à une absence sur un créneau du mardi soir ou jeudi.` 
+            error: penaltyCheck.reason || `Inscription de l'équipe impossible : ${student ? student.firstName + ' ' + student.lastName : 'Un élève'} est suspendu(e) d'inscription cette semaine suite à une absence constatée la semaine passée.` 
           });
         }
 
@@ -858,7 +856,7 @@ async function startServer() {
   // --------------------------------------------------------------------------
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, allowedHosts: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);

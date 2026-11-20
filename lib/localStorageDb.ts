@@ -260,6 +260,7 @@ export function saveLocalSession(session: Partial<Session>): Session {
     teamSize: session.teamSize !== undefined ? session.teamSize : existing?.teamSize,
     teams: session.teams !== undefined ? session.teams : (existing?.teams || []),
     recurrenceGroupId: session.recurrenceGroupId !== undefined ? session.recurrenceGroupId : existing?.recurrenceGroupId,
+    blockLastWeekAbsent: session.blockLastWeekAbsent !== undefined ? session.blockLastWeekAbsent : existing?.blockLastWeekAbsent,
     blockOnlineRegistration: session.blockOnlineRegistration !== undefined ? session.blockOnlineRegistration : (existing?.blockOnlineRegistration ?? false),
     directRegistrationTeacherId: session.directRegistrationTeacherId !== undefined ? session.directRegistrationTeacherId : existing?.directRegistrationTeacherId,
     directRegistrationTeacherName: session.directRegistrationTeacherName !== undefined ? session.directRegistrationTeacherName : existing?.directRegistrationTeacherName,
