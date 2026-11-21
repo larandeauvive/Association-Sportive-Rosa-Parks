@@ -22,6 +22,7 @@ import {
   getSessionCategory, getSessionDayName, SessionCategory,
   checkUnexcusedAbsencePenalty, isBlockLastWeekAbsentEnabled
 } from '../lib/sessionUtils';
+import { downloadSessionConvocationWord } from '../lib/wordConvocationHelper';
 
 interface SessionManagerProps {
   students: Student[];
@@ -294,6 +295,20 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
       });
     }
   }, [activeCategory, timeFilter, selectBestSession]);
+
+  const handleDownloadWordConvocation = async (sessionToExport = activeSession) => {
+    if (!sessionToExport) return;
+    try {
+      await downloadSessionConvocationWord({
+        session: sessionToExport,
+        students,
+        teachers,
+        activeYear,
+      });
+    } catch (err) {
+      console.error('Erreur génération convocation Word:', err);
+    }
+  };
 
   // Fonction d'impression complète et professionnelle de la feuille d'appel & d'émargement
   const handlePrintSession = (sessionToPrint = activeSession) => {
@@ -1603,6 +1618,14 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
               ) : (
                 <Share2 className="w-3.5 h-3.5" />
               )}
+            </button>
+            <button 
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleDownloadWordConvocation(s); }} 
+              className="p-1 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors cursor-pointer" 
+              title="Générer la convocation format Word (.docx)"
+            >
+              <FileText className="w-3.5 h-3.5" />
             </button>
             <button 
               type="button"
@@ -4013,7 +4036,7 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button 
                   type="button"
                   onClick={() => {
@@ -4025,6 +4048,15 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                 >
                   <CheckCircle2 className="w-4 h-4 text-emerald-200" />
                   <span>Faire l'appel (Encadré)</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleDownloadWordConvocation(activeSession)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-sky-600 hover:bg-sky-700 active:scale-95 text-white text-xs sm:text-sm font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                  title="Générer et télécharger la convocation au format Word (.docx)"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Convocation Word</span>
                 </button>
                 <button 
                   type="button"
@@ -4069,14 +4101,24 @@ export function SessionManager({ students, activeYear, defaultCategory = 'all', 
                       </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handlePrintSession(activeSession)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Imprimer le bilan</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadWordConvocation(activeSession)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Convocation Word</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePrintSession(activeSession)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors shrink-0 cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Imprimer le bilan</span>
+                    </button>
+                  </div>
                 </div>
               )}
               {/* ZONE DU DOCUMENT JOINT (PDF) SUR LA FEUILLE DE SÉANCE */}

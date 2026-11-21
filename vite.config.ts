@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
         hmr: false,
+        ws: false,
         allowedHosts: true,
       },
       plugins: [tailwindcss(), react()],

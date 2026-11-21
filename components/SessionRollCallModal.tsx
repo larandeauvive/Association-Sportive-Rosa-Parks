@@ -3,11 +3,12 @@ import { Student, Session, Teacher } from '../types';
 import { saveSessionApi, promoteFromWaitlistApi, leaveSessionWaitlistApi, getTeachersList, getSessionsList } from '../lib/db';
 import { getSessionDayName, getSessionCategory, isBlockLastWeekAbsentEnabled, checkUnexcusedAbsencePenalty } from '../lib/sessionUtils';
 import { GenerateSessionFromWaitlistModal } from './GenerateSessionFromWaitlistModal';
+import { downloadSessionConvocationWord } from '../lib/wordConvocationHelper';
 import { 
   CheckCircle2, Circle, Users, UserCheck, PlusCircle, Search, 
   Printer, Share2, Check, Moon, Zap, Calendar, Clock, X,
   AlertCircle, Hourglass, Sparkles, UserPlus, Trash2, ArrowUpRight,
-  FileCheck2, ShieldAlert
+  FileCheck2, ShieldAlert, FileText
 } from 'lucide-react';
 
 interface Props {
@@ -588,6 +589,32 @@ export const SessionRollCallModal: React.FC<Props> = ({
               >
                 {copiedLink ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4 text-indigo-200" />}
                 <span className="hidden sm:inline">Lien élève</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!currentSession) return;
+                  try {
+                    await downloadSessionConvocationWord({
+                      session: currentSession,
+                      students,
+                      teachers: teachersList,
+                      activeYear,
+                    });
+                    setNotification('Convocation Word (.docx) téléchargée');
+                    setTimeout(() => setNotification(null), 3000);
+                  } catch (err) {
+                    console.error('Erreur génération convocation Word:', err);
+                    setNotification('Erreur lors de la génération Word');
+                    setTimeout(() => setNotification(null), 3000);
+                  }
+                }}
+                className="p-2 sm:px-3 sm:py-2 bg-sky-500/80 hover:bg-sky-500 text-white border border-sky-300/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                title="Générer et télécharger la convocation au format Word (.docx)"
+              >
+                <FileText className="w-4 h-4 text-white" />
+                <span className="hidden sm:inline">Convoc. Word</span>
               </button>
 
               <button

@@ -13,6 +13,7 @@ import {
 } from '../lib/db';
 import { AVAILABLE_CONVOCATION_CRITERIA, getStudentCategory } from '../lib/categoryUtils';
 import { formatFileSize } from '../lib/registrationFormHelper';
+import { downloadConvocationWord } from '../lib/wordConvocationHelper';
 
 interface Props {
   students: Student[];
@@ -799,6 +800,21 @@ ${(conv.tshirtManagerId || (conv.snackManagerIds?.length || 0) > 0) ? `
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadWordConvocation = async (conv: Convocation) => {
+    try {
+      const linkedSession = sessions.find(s => s.convocationId === conv.id || s.id === conv.sessionId) || null;
+      await downloadConvocationWord({
+        convocation: conv,
+        students,
+        teachers,
+        activeYear,
+        linkedSession,
+      });
+    } catch (err) {
+      console.error('Erreur génération convocation Word:', err);
+    }
+  };
+
   // Séance liée pour la convocation active
   const linkedSessionForActive = useMemo(() => {
     if (!activeConvocation) return null;
@@ -912,9 +928,16 @@ ${(conv.tshirtManagerId || (conv.snackManagerIds?.length || 0) > 0) ? `
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleDownloadConvocation(conv); }} 
                       className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer" 
-                      title="Télécharger la convocation officielle (avec validation AP, Droit Image et Savoir Nager)"
+                      title="Télécharger la convocation officielle (HTML)"
                     >
                       <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDownloadWordConvocation(conv); }} 
+                      className="p-1.5 text-slate-500 hover:text-sky-700 hover:bg-sky-50 rounded-lg transition-colors cursor-pointer" 
+                      title="Générer la convocation au format Word (.docx)"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-sky-600" />
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); handlePrint(conv); }} 
@@ -1006,6 +1029,14 @@ ${(conv.tshirtManagerId || (conv.snackManagerIds?.length || 0) > 0) ? `
                   title="Télécharger la convocation officielle (document autonome complet avec AP, Droit Image et Savoir Nager)"
                 >
                   <Download className="w-3.5 h-3.5" /> Télécharger
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleDownloadWordConvocation(activeConvocation)} 
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer shadow-xs"
+                  title="Générer et télécharger la convocation au format Word (.docx)"
+                >
+                  <FileText className="w-3.5 h-3.5" /> Convocation Word (.docx)
                 </button>
                 <button 
                   onClick={() => handlePrintEleves(activeConvocation)} 

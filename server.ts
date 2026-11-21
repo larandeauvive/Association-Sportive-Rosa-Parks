@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import {
   getAllStudents,
   getStudentById,
@@ -854,12 +853,40 @@ async function startServer() {
   // --------------------------------------------------------------------------
   // VITE / STATIC SERVING
   // --------------------------------------------------------------------------
+  let viteMiddleware: express.RequestHandler | null = null;
+  let viteReady: Promise<express.RequestHandler> | null = null;
+  const ensureVite = () => {
+    if (!viteReady) {
+      viteReady = import('vite')
+        .then(({ createServer: createViteServer }) =>
+          createViteServer({
+            server: { middlewareMode: true, allowedHosts: true, hmr: false, ws: false },
+            appType: 'spa',
+          })
+        )
+        .then((vite) => {
+          viteMiddleware = vite.middlewares as unknown as express.RequestHandler;
+          return viteMiddleware;
+        });
+      viteReady.catch((err) => {
+        console.error('Vite dev server initialization error:', err);
+      });
+    }
+    return viteReady;
+  };
+
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true, allowedHosts: true },
-      appType: 'spa',
+    app.use(async (req, res, next) => {
+      try {
+        const mw = viteMiddleware || (await ensureVite());
+        if (mw) {
+          return mw(req, res, next);
+        }
+        next();
+      } catch (err) {
+        next(err);
+      }
     });
-    app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -870,6 +897,9 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
+    if (process.env.NODE_ENV !== 'production') {
+      ensureVite();
+    }
   });
 }
 

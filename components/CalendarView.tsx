@@ -25,6 +25,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { downloadRegistrationForm, formatFileSize } from '../lib/registrationFormHelper';
 import { getStudentCategory } from '../lib/categoryUtils';
 import { getSessionCategory, getSessionDayName, formatRegistrationRule, getSeriesSessions, isBlockLastWeekAbsentEnabled } from '../lib/sessionUtils';
+import { downloadSessionConvocationWord, downloadConvocationWord } from '../lib/wordConvocationHelper';
 
 interface Props {
   students: Student[];
@@ -1019,6 +1020,50 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
     } catch (err: any) {
       console.error('Erreur suppression événement:', err);
       alert('Erreur lors de la suppression de l\'événement : ' + (err?.message || 'Erreur inattendue'));
+    }
+  };
+
+  const handleDownloadWordConvocation = async (eventOverride?: CalendarEvent) => {
+    if (!isTeacherOrAdmin) return;
+    const targetEvent = eventOverride || selectedEvent;
+    if (!targetEvent) return;
+
+    try {
+      if (targetEvent.type === 'session') {
+        const sess = targetEvent.raw as Session;
+        const linkedConvEvent = events.find(
+          (e) =>
+            e.type === 'convocation' &&
+            ((e.raw as Convocation).sessionId === sess.id || (e.raw as Convocation).id === sess.convocationId)
+        );
+        await downloadSessionConvocationWord({
+          session: sess,
+          students: effectiveStudents,
+          teachers,
+          activeYear,
+          linkedConvocation: linkedConvEvent ? (linkedConvEvent.raw as Convocation) : null,
+        });
+      } else {
+        const conv = targetEvent.raw as Convocation;
+        const linkedSessEvent = events.find(
+          (e) =>
+            e.type === 'session' &&
+            ((e.raw as Session).convocationId === conv.id || (e.raw as Session).id === conv.sessionId)
+        );
+        await downloadConvocationWord({
+          convocation: conv,
+          students: effectiveStudents,
+          teachers,
+          activeYear,
+          linkedSession: linkedSessEvent ? (linkedSessEvent.raw as Session) : null,
+        });
+      }
+      setCalendarActionNotice('Convocation Word (.docx) générée et téléchargée.');
+      setTimeout(() => setCalendarActionNotice(null), 3000);
+    } catch (err) {
+      console.error('Erreur génération convocation Word:', err);
+      setCalendarActionNotice('Erreur lors de la génération du fichier Word.');
+      setTimeout(() => setCalendarActionNotice(null), 3500);
     }
   };
 
@@ -3422,7 +3467,7 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     <Printer className="w-4 h-4 text-slate-400" />
                     Générer des documents
                   </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <button 
                       onClick={() => printDocument('liste')}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors border border-slate-200 cursor-pointer"
@@ -3436,6 +3481,15 @@ export const CalendarView: React.FC<Props> = ({ students, activeYear, isPublic, 
                     >
                       <FileText className="w-4 h-4" />
                       Convocation
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => handleDownloadWordConvocation()}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg font-medium transition-colors border border-sky-200 cursor-pointer"
+                      title="Télécharger la convocation éditable au format Microsoft Word (.docx)"
+                    >
+                      <Download className="w-4 h-4" />
+                      Convocation Word (.docx)
                     </button>
                     <button 
                       onClick={() => printDocument('projet')}
